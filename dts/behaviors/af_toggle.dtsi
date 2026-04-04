@@ -1,0 +1,9 @@
+/ {
+	behaviors {
+		af_toggle: af_toggle {
+			compatible = "zmk,behavior-adaptive-feedback-toggle";
+			#binding-cells = <1>;
+			display-name = "Toggle RGB and vibration events";
+		};
+	};
+};

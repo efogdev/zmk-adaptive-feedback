@@ -1,0 +1,1 @@
+target_sources_ifdef(CONFIG_ZMK_BEHAVIOR_ADAPTIVE_FEEDBACK_TOGGLE app PRIVATE behavior_adaptive_feedback_toggle.c)

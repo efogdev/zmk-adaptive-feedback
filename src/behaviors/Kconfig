@@ -1,0 +1,4 @@
+config ZMK_BEHAVIOR_ADAPTIVE_FEEDBACK_TOGGLE
+    bool "Adaptive Feedback Toggle behavior"
+    depends on ZMK_ADAPTIVE_FEEDBACK
+    default y

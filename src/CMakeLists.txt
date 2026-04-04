@@ -1,2 +1,3 @@
 add_subdirectory(shell)
+add_subdirectory(behaviors)
 target_sources_ifdef(CONFIG_ZMK_ADAPTIVE_FEEDBACK app PRIVATE adaptive_feedback.c)

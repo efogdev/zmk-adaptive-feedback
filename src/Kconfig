@@ -58,3 +58,4 @@ config ZMK_ADAPTIVE_FEEDBACK_BREATHE_STEPS
 endif
 
 rsource "shell/Kconfig"
+rsource "behaviors/Kconfig"
