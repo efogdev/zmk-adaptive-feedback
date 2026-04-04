@@ -80,6 +80,7 @@ struct zaf_evt_override {
 struct zaf_runtime_state {
     bool on;
     bool override_active;
+    bool feedback_active;
     struct zaf_led_config override_cfg;
     struct zaf_evt_override rt_layers[ZMK_KEYMAP_LAYERS_LEN];
     struct zaf_evt_override rt_idle;
@@ -200,7 +201,9 @@ static void zaf_fill(const struct zaf_rgb color) {
 static void zaf_clear_pixels(void) {
     const struct zaf_rgb off = {0, 0, 0};
     zaf_fill(off);
-    ext_power_disable(zaf_config.ext_power);
+    if (!zaf_state.feedback_active && zaf_config.ext_power != NULL) {
+        ext_power_disable(zaf_config.ext_power);
+    }
 }
 
 static struct zaf_evt_override *zaf_evt_rt_slot(uint8_t event_idx, uint8_t sub_idx);
@@ -257,9 +260,6 @@ static void zaf_apply_animation(const struct zaf_led_config *cfg) {
     }
 
     const struct zaf_rgb c0 = cfg->colors[0];
-    const struct zaf_rgb off = {0, 0, 0};
-    const struct zaf_rgb c1 = (cfg->color_count > 1) ? cfg->colors[1] : off;
-
     switch (cfg->animation) {
     case ZAF_ANIM_SOLID:
         zaf_fill(c0);
@@ -268,11 +268,17 @@ static void zaf_apply_animation(const struct zaf_led_config *cfg) {
     case ZAF_ANIM_BLINK: {
         const uint16_t phase_ms = zaf_state.blink_phase ? cfg->blink_on_ms : cfg->blink_off_ms;
         const uint16_t phase_ticks = zaf_ticks_from_ms(phase_ms);
-        zaf_fill(zaf_state.blink_phase ? c0 : c1);
+        const uint8_t idx = zaf_state.color_idx % cfg->color_count;
+        const struct zaf_rgb c_cur = cfg->colors[idx];
+        const struct zaf_rgb off = {0, 0, 0};
+        zaf_fill(zaf_state.blink_phase ? c_cur : off);
         zaf_state.blink_phase_ticks++;
         if (zaf_state.blink_phase_ticks >= phase_ticks) {
             zaf_state.blink_phase = !zaf_state.blink_phase;
             zaf_state.blink_phase_ticks = 0;
+            if (zaf_state.blink_phase) {
+                zaf_state.color_idx = (zaf_state.color_idx + 1) % cfg->color_count;
+            }
         }
         break;
     }
@@ -282,7 +288,6 @@ static void zaf_apply_animation(const struct zaf_led_config *cfg) {
         const int step = (int)zaf_state.anim_step - (int)(breathe_steps / 2);
         const int abs_step = (step < 0) ? -step : step;
         const int half_steps = (int)(breathe_steps / 2);
-        /* Triangle wave: 0 at edges, 100 at center */
         const uint8_t scale = (half_steps > 0) ? (uint8_t)((100 * (half_steps - abs_step)) / half_steps) : 100;
         const uint8_t idx = zaf_state.color_idx % cfg->color_count;
         const struct zaf_rgb base = cfg->colors[idx];
@@ -293,7 +298,6 @@ static void zaf_apply_animation(const struct zaf_led_config *cfg) {
         };
         zaf_fill(bc);
         zaf_state.anim_step += 10;
-        // Switch color when animation reaches the OFF stage (scale = 0)
         if (zaf_state.anim_step >= breathe_steps) {
             zaf_state.anim_step = 0;
             zaf_state.color_idx = (zaf_state.color_idx + 1) % cfg->color_count;
@@ -304,6 +308,8 @@ static void zaf_apply_animation(const struct zaf_led_config *cfg) {
     case ZAF_ANIM_FLASH:
         if (zaf_state.flash_active) {
             zaf_fill(c0);
+        } else {
+            zaf_clear_pixels();
         }
         break;
     default: break;
@@ -317,6 +323,7 @@ static void zaf_feedback_off_work_fn(struct k_work *work) {
     if (zaf_config.feedback_extra_gpio != NULL) {
         gpio_pin_set_dt(zaf_config.feedback_extra_gpio, zaf_prev_extra_gpio_state);
     }
+    zaf_state.feedback_active = false;
 }
 
 static void zaf_feedback_on_work_fn(struct k_work *work) {
@@ -331,6 +338,7 @@ static void zaf_trigger_feedback(const uint16_t duration_ms) {
     if (!zaf_config.feedback_enabled || zaf_config.feedback_gpio == NULL || duration_ms == 0) {
         return;
     }
+    zaf_state.feedback_active = true;
     if (zaf_config.feedback_extra_gpio != NULL) {
         zaf_prev_extra_gpio_state = gpio_pin_get_dt(zaf_config.feedback_extra_gpio);
         gpio_pin_set_dt(zaf_config.feedback_extra_gpio, 1);
@@ -347,7 +355,7 @@ static void zaf_trigger_feedback(const uint16_t duration_ms) {
 extern struct k_timer zaf_timer;
 
 static void zaf_tick_reset_blink(void) {
-    zaf_state.blink_phase = false;
+    zaf_state.blink_phase = true;
     zaf_state.blink_phase_ticks = 0;
 }
 
@@ -787,7 +795,9 @@ int zaf_event_get(const uint8_t event_idx, const uint8_t sub_idx, struct zaf_eve
     return 0;
 }
 
-static int zaf_evt_set_impl(const uint8_t event_idx, const uint8_t sub_idx, void (*set_field)(struct zaf_led_config *, void *), void *arg, bool force_persist) {
+static int zaf_evt_set_impl(const uint8_t event_idx, const uint8_t sub_idx,
+    void (*set_field)(struct zaf_led_config *, void *), void *arg, const bool force_persist
+) {
     struct zaf_evt_override *slot = zaf_evt_rt_slot(event_idx, sub_idx);
     if (!slot) {
         return -EINVAL;
@@ -814,7 +824,7 @@ static void set_color_single(struct zaf_led_config *cfg, void *arg) {
 }
 
 static void set_color_at(struct zaf_led_config *cfg, void *arg) {
-    struct { uint8_t idx; struct zaf_rgb color; } *p = arg;
+    const struct { uint8_t idx; struct zaf_rgb color; } *p = arg;
     cfg->colors[p->idx] = p->color;
     if (p->idx >= cfg->color_count) {
         cfg->color_count = p->idx + 1;
@@ -826,7 +836,7 @@ static void set_anim(struct zaf_led_config *cfg, void *arg) {
 }
 
 static void set_blink(struct zaf_led_config *cfg, void *arg) {
-    struct { uint16_t on_ms; uint16_t off_ms; } *p = arg;
+    const struct { uint16_t on_ms; uint16_t off_ms; } *p = arg;
     cfg->blink_on_ms  = p->on_ms;
     cfg->blink_off_ms = p->off_ms;
 }
@@ -942,7 +952,19 @@ static int zaf_event_listener(const zmk_event_t *eh) {
 
     const struct zmk_activity_state_changed *act = as_zmk_activity_state_changed(eh);
     if (act) {
-        zaf_state.idle = (act->state != ZMK_ACTIVITY_ACTIVE);
+        const bool now_idle = (act->state != ZMK_ACTIVITY_ACTIVE);
+        if (now_idle && !zaf_state.idle) {
+            const struct zaf_led_config *icfg = zaf_evt_eff_cfg(ZAF_EVTIDX_IDLE, 0);
+            if (icfg != NULL) {
+                zaf_tick_reset_blink();
+                if (icfg->animation == ZAF_ANIM_FLASH) {
+                    zaf_state.flash_active = true;
+                    zaf_state.flash_ticks = zaf_ticks_from_ms(icfg->flash_duration_ms);
+                }
+                zaf_trigger_feedback(icfg->feedback_duration_ms);
+            }
+        }
+        zaf_state.idle = now_idle;
         zaf_kick_timer();
         return ZMK_EV_EVENT_BUBBLE;
     }
@@ -973,6 +995,10 @@ static int zaf_event_listener(const zmk_event_t *eh) {
         if (layer->state && l < ZMK_KEYMAP_LAYERS_LEN) {
             const struct zaf_led_config *lcfg = zaf_evt_eff_cfg(ZAF_EVTIDX_LAYER, l);
             if (lcfg != NULL) {
+                if (lcfg->animation == ZAF_ANIM_FLASH) {
+                    zaf_state.flash_active = true;
+                    zaf_state.flash_ticks = zaf_ticks_from_ms(lcfg->flash_duration_ms);
+                }
                 zaf_trigger_feedback(lcfg->feedback_duration_ms);
             }
         }
