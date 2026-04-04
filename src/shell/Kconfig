@@ -1,0 +1,8 @@
+if SHELL
+
+config ZMK_ADAPTIVE_RGB_SHELL
+    bool "Adaptive RGB shell commands"
+    depends on ZMK_ADAPTIVE_RGB
+    default y
+
+endif

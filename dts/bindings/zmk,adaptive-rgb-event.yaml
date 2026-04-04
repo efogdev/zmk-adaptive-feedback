@@ -1,0 +1,57 @@
+description: ZMK Adaptive RGB per-event LED configuration
+
+compatible: "zmk,adaptive-rgb-event"
+
+properties:
+  event-type:
+    type: string
+    required: true
+    enum:
+      - "layer"
+      - "battery-warning"
+      - "battery-critical"
+      - "usb-connected"
+      - "usb-disconnected"
+      - "ble-profile-changed"
+      - "idle"
+      - "no-endpoint"
+
+  layer-index:
+    type: int
+    default: 0
+
+  battery-level:
+    type: int
+    default: 1
+
+  colors:
+    type: uint8-array
+    required: true
+
+  persistent:
+    type: boolean
+
+  animation:
+    type: string
+    default: "solid"
+    enum:
+      - "solid"
+      - "blink"
+      - "breathe"
+      - "flash"
+
+  blink-on-ms:
+    type: int
+    default: 500
+
+  blink-off-ms:
+    type: int
+    default: 500
+
+  flash-duration-ms:
+    type: int
+    default: 300
+
+  feedback-duration:
+    type: int
+    default: 0

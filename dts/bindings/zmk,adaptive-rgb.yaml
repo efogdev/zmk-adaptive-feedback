@@ -1,0 +1,98 @@
+description: ZMK Adaptive RGB LED controller
+
+compatible: "zmk,adaptive-rgb"
+
+properties:
+  led-strip:
+    type: phandle
+    required: true
+
+  chain-length:
+    type: int
+    required: true
+
+  ext-power:
+    type: phandle
+    required: false
+
+  feedback-enabled:
+    type: boolean
+
+  feedback-gpios:
+    type: phandle-array
+    required: false
+
+  feedback-extra-gpios:
+    type: phandle-array
+    required: false
+
+  feedback-delay:
+    type: int
+    default: 0
+    description: >
+      Delay in milliseconds between enabling ext-power / feedback-extra-gpios
+      and actually triggering the feedback GPIO.
+
+  battery-levels:
+    type: int
+    default: 3
+    description: >
+      Number of discrete battery-warning / battery-critical severity levels
+      (matching the battery-level values used in child event entries).
+
+child-binding:
+  description: Per-event LED configuration
+
+  properties:
+    event-type:
+      type: string
+      required: true
+      enum:
+        - "layer"
+        - "battery-warning"
+        - "battery-critical"
+        - "usb-connected"
+        - "usb-disconnected"
+        - "ble-profile-changed"
+        - "idle"
+        - "no-endpoint"
+
+    layer-index:
+      type: int
+      default: 0
+
+    battery-level:
+      type: int
+      default: 1
+
+    colors:
+      type: uint8-array
+      required: true
+
+    persistent:
+      type: boolean
+
+    animation:
+      type: string
+      default: "solid"
+      enum:
+        - "solid"
+        - "blink"
+        - "breathe"
+        - "flash"
+
+    blink-on-ms:
+      type: int
+      default: 500
+
+    blink-off-ms:
+      type: int
+      default: 500
+
+    flash-duration-ms:
+      type: int
+      default: 300
+
+    feedback-duration:
+      type: int
+      default: 0
