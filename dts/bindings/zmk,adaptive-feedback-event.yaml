@@ -1,6 +1,6 @@
-description: ZMK Adaptive RGB per-event LED configuration
+description: ZMK Adaptive Feedback per-event LED configuration
 
-compatible: "zmk,adaptive-rgb-event"
+compatible: "zmk,adaptive-feedback-event"
 
 properties:
   event-type:

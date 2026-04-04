@@ -1,6 +1,6 @@
-description: ZMK Adaptive RGB LED controller
+description: ZMK Adaptive Feedback controller
 
-compatible: "zmk,adaptive-rgb"
+compatible: "zmk,adaptive-feedback"
 
 properties:
   led-strip:
@@ -32,13 +32,6 @@ properties:
     description: >
       Delay in milliseconds between enabling ext-power / feedback-extra-gpios
       and actually triggering the feedback GPIO.
-
-  battery-levels:
-    type: int
-    default: 3
-    description: >
-      Number of discrete battery-warning / battery-critical severity levels
-      (matching the battery-level values used in child event entries).
 
 child-binding:
   description: Per-event LED configuration

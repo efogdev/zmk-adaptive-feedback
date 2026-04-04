@@ -1,1 +1,1 @@
-target_sources_ifdef(CONFIG_ZMK_ADAPTIVE_RGB_SHELL app PRIVATE adaptive_rgb_shell.c)
+target_sources_ifdef(CONFIG_ZMK_ADAPTIVE_FEEDBACK_SHELL app PRIVATE adaptive_feedback_shell.c)

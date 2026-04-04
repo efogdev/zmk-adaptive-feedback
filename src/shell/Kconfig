@@ -1,8 +1,8 @@
 if SHELL
 
-config ZMK_ADAPTIVE_RGB_SHELL
-    bool "Adaptive RGB shell commands"
-    depends on ZMK_ADAPTIVE_RGB
+config ZMK_ADAPTIVE_FEEDBACK_SHELL
+    bool "Adaptive Feedback shell commands"
+    depends on ZMK_ADAPTIVE_FEEDBACK
     default y
 
 endif

@@ -5,9 +5,9 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/logging/log.h>
 
-#include <zmk_adaptive_rgb/adaptive_rgb.h>
+#include <zmk_adaptive_feedback/adaptive_feedback.h>
 
-LOG_MODULE_DECLARE(zmk_adaptive_rgb, CONFIG_ZMK_LOG_LEVEL);
+LOG_MODULE_DECLARE(zmk_adaptive_feedback, CONFIG_ZMK_LOG_LEVEL);
 
 #define shprint(_sh, _fmt, ...)                      \
     do {                                             \
@@ -15,11 +15,11 @@ LOG_MODULE_DECLARE(zmk_adaptive_rgb, CONFIG_ZMK_LOG_LEVEL);
             shell_print((_sh), _fmt, ##__VA_ARGS__); \
     } while (0)
 
-static const char * const zar_anim_names[] = {"solid", "blink", "breathe", "flash"};
+static const char * const zaf_anim_names[] = {"solid", "blink", "breathe", "flash"};
 
 static int parse_anim(const char *s, uint8_t *out) {
-    for (uint8_t i = 0; i < ARRAY_SIZE(zar_anim_names); i++) {
-        if (strcmp(s, zar_anim_names[i]) == 0) {
+    for (uint8_t i = 0; i < ARRAY_SIZE(zaf_anim_names); i++) {
+        if (strcmp(s, zaf_anim_names[i]) == 0) {
             *out = i;
             return 0;
         }
@@ -33,14 +33,14 @@ static int parse_anim(const char *s, uint8_t *out) {
  * *consumed is set to the number of argv slots consumed.
  *
  * Syntax:
- *   layer <n>          ZAR_EVTIDX_LAYER,       sub_idx = layer index
- *   batt-warn <1-3>    ZAR_EVTIDX_BATT_WARN,   sub_idx = level-1
- *   batt-crit <1-3>    ZAR_EVTIDX_BATT_CRIT,   sub_idx = level-1
- *   idle               ZAR_EVTIDX_IDLE,         sub_idx = 0
- *   usb-conn           ZAR_EVTIDX_USB_CONN,     sub_idx = 0
- *   usb-disconn        ZAR_EVTIDX_USB_DISCONN,  sub_idx = 0
- *   ble-profile        ZAR_EVTIDX_BLE_PROFILE,  sub_idx = 0
- *   no-endpoint        ZAR_EVTIDX_NO_ENDPOINT,  sub_idx = 0
+ *   layer <n>          ZAF_EVTIDX_LAYER,       sub_idx = layer index
+ *   batt-warn <1-3>    ZAF_EVTIDX_BATT_WARN,   sub_idx = level-1
+ *   batt-crit <1-3>    ZAF_EVTIDX_BATT_CRIT,   sub_idx = level-1
+ *   idle               ZAF_EVTIDX_IDLE,         sub_idx = 0
+ *   usb-conn           ZAF_EVTIDX_USB_CONN,     sub_idx = 0
+ *   usb-disconn        ZAF_EVTIDX_USB_DISCONN,  sub_idx = 0
+ *   ble-profile        ZAF_EVTIDX_BLE_PROFILE,  sub_idx = 0
+ *   no-endpoint        ZAF_EVTIDX_NO_ENDPOINT,  sub_idx = 0
  */
 static int parse_event_spec(const struct shell *sh,
                              const int argc, char **argv,
@@ -61,7 +61,7 @@ static int parse_event_spec(const struct shell *sh,
 
             return -EINVAL;
         }
-        *event_idx = ZAR_EVTIDX_LAYER;
+        *event_idx = ZAF_EVTIDX_LAYER;
         *sub_idx   = (uint8_t)strtol(argv[1], NULL, 10);
         *consumed  = 2;
     } else if (strcmp(type, "batt-warn") == 0) {
@@ -74,7 +74,7 @@ static int parse_event_spec(const struct shell *sh,
             shprint(sh, "batt-warn level must be 1-3");
             return -EINVAL;
         }
-        *event_idx = ZAR_EVTIDX_BATT_WARN;
+        *event_idx = ZAF_EVTIDX_BATT_WARN;
         *sub_idx   = (uint8_t)(lvl - 1);
         *consumed  = 2;
     } else if (strcmp(type, "batt-crit") == 0) {
@@ -87,19 +87,19 @@ static int parse_event_spec(const struct shell *sh,
             shprint(sh, "batt-crit level must be 1-3");
             return -EINVAL;
         }
-        *event_idx = ZAR_EVTIDX_BATT_CRIT;
+        *event_idx = ZAF_EVTIDX_BATT_CRIT;
         *sub_idx   = (uint8_t)(lvl - 1);
         *consumed  = 2;
     } else if (strcmp(type, "idle") == 0) {
-        *event_idx = ZAR_EVTIDX_IDLE;
+        *event_idx = ZAF_EVTIDX_IDLE;
     } else if (strcmp(type, "usb-conn") == 0) {
-        *event_idx = ZAR_EVTIDX_USB_CONN;
+        *event_idx = ZAF_EVTIDX_USB_CONN;
     } else if (strcmp(type, "usb-disconn") == 0) {
-        *event_idx = ZAR_EVTIDX_USB_DISCONN;
+        *event_idx = ZAF_EVTIDX_USB_DISCONN;
     } else if (strcmp(type, "ble-profile") == 0) {
-        *event_idx = ZAR_EVTIDX_BLE_PROFILE;
+        *event_idx = ZAF_EVTIDX_BLE_PROFILE;
     } else if (strcmp(type, "no-endpoint") == 0) {
-        *event_idx = ZAR_EVTIDX_NO_ENDPOINT;
+        *event_idx = ZAF_EVTIDX_NO_ENDPOINT;
     } else {
         shprint(sh, "unknown event type '%s'", type);
         return -EINVAL;
@@ -108,9 +108,9 @@ static int parse_event_spec(const struct shell *sh,
     return 0;
 }
 
-static void print_event_info(const struct shell *sh, const struct zar_event_info *info) {
+static void print_event_info(const struct shell *sh, const struct zaf_event_info *info) {
     shprint(sh, "  anim:       %s",
-            info->anim < ARRAY_SIZE(zar_anim_names) ? zar_anim_names[info->anim] : "?");
+            info->anim < ARRAY_SIZE(zaf_anim_names) ? zaf_anim_names[info->anim] : "?");
     shprint(sh, "  colors:     %d", info->color_count);
     for (uint8_t i = 0; i < info->color_count; i++) {
         shprint(sh, "    [%d] r=%-3d g=%-3d b=%-3d",
@@ -158,8 +158,8 @@ static int cmd_evt(const struct shell *sh, const size_t argc, char **argv) {
     int rc = 0;
 
     if (strcmp(prop, "show") == 0) {
-        struct zar_event_info info;
-        rc = zar_event_get(event_idx, sub_idx, &info);
+        struct zaf_event_info info;
+        rc = zaf_event_get(event_idx, sub_idx, &info);
         if (rc) {
             shprint(sh, "error: %d", rc);
             return rc;
@@ -173,14 +173,14 @@ static int cmd_evt(const struct shell *sh, const size_t argc, char **argv) {
          * color <idx> <r> <g> <b>   -- set colors[idx], expand count if needed */
         if (nvals < 3) {
             shprint(sh, "usage: color [<idx 0-%d>] <r 0-255> <g 0-255> <b 0-255>",
-                    ZAR_INFO_MAX_COLORS - 1);
+                    ZAF_INFO_MAX_COLORS - 1);
             return -EINVAL;
         }
         int r, g, b;
         if (nvals >= 4) {
             const int idx = (int)strtol(vals[0], NULL, 10);
-            if (idx < 0 || idx >= ZAR_INFO_MAX_COLORS) {
-                shprint(sh, "error: idx must be 0-%d", ZAR_INFO_MAX_COLORS - 1);
+            if (idx < 0 || idx >= ZAF_INFO_MAX_COLORS) {
+                shprint(sh, "error: idx must be 0-%d", ZAF_INFO_MAX_COLORS - 1);
                 return -EINVAL;
             }
             r = (int)strtol(vals[1], NULL, 10);
@@ -190,12 +190,12 @@ static int cmd_evt(const struct shell *sh, const size_t argc, char **argv) {
                 shprint(sh, "error: r/g/b must be 0-255");
                 return -EINVAL;
             }
-            const struct zar_rgb color = {
+            const struct zaf_rgb color = {
                 .r = (uint8_t)r,
                 .g = (uint8_t)g,
                 .b = (uint8_t)b,
             };
-            rc = zar_event_set_color_at(event_idx, sub_idx, (uint8_t)idx, color);
+            rc = zaf_event_set_color_at(event_idx, sub_idx, (uint8_t)idx, color);
         } else {
             r = (int)strtol(vals[0], NULL, 10);
             g = (int)strtol(vals[1], NULL, 10);
@@ -204,12 +204,12 @@ static int cmd_evt(const struct shell *sh, const size_t argc, char **argv) {
                 shprint(sh, "error: r/g/b must be 0-255");
                 return -EINVAL;
             }
-            const struct zar_rgb color = {
+            const struct zaf_rgb color = {
                 .r = (uint8_t)r,
                 .g = (uint8_t)g,
                 .b = (uint8_t)b,
             };
-            rc = zar_event_set_color(event_idx, sub_idx, color);
+            rc = zaf_event_set_color(event_idx, sub_idx, color);
         }
     } else if (strcmp(prop, "anim") == 0) {
         if (nvals < 1) {
@@ -221,13 +221,13 @@ static int cmd_evt(const struct shell *sh, const size_t argc, char **argv) {
             shprint(sh, "unknown animation '%s'", vals[0]);
             return -EINVAL;
         }
-        rc = zar_event_set_anim(event_idx, sub_idx, anim);
+        rc = zaf_event_set_anim(event_idx, sub_idx, anim);
     } else if (strcmp(prop, "blink") == 0) {
         if (nvals < 2) {
             shprint(sh, "usage: blink <on_ms> <off_ms>");
             return -EINVAL;
         }
-        rc = zar_event_set_blink(event_idx, sub_idx,
+        rc = zaf_event_set_blink(event_idx, sub_idx,
                                  (uint16_t)strtol(vals[0], NULL, 10),
                                  (uint16_t)strtol(vals[1], NULL, 10));
     } else if (strcmp(prop, "flash") == 0) {
@@ -235,14 +235,14 @@ static int cmd_evt(const struct shell *sh, const size_t argc, char **argv) {
             shprint(sh, "usage: flash <dur_ms>");
             return -EINVAL;
         }
-        rc = zar_event_set_flash(event_idx, sub_idx,
+        rc = zaf_event_set_flash(event_idx, sub_idx,
                                  (uint16_t)strtol(vals[0], NULL, 10));
     } else if (strcmp(prop, "feedback") == 0) {
         if (nvals < 1) {
             shprint(sh, "usage: feedback <dur_ms>");
             return -EINVAL;
         }
-        rc = zar_event_set_feedback(event_idx, sub_idx,
+        rc = zaf_event_set_feedback(event_idx, sub_idx,
                                     (uint16_t)strtol(vals[0], NULL, 10));
     } else {
         shprint(sh, "unknown property '%s'", prop);
@@ -256,21 +256,31 @@ static int cmd_evt(const struct shell *sh, const size_t argc, char **argv) {
 }
 
 static int cmd_on(const struct shell *sh, size_t argc, char **argv) {
-    const int rc = zar_on();
+    const int rc = zaf_on();
     if (rc) shprint(sh, "error: %d", rc);
     return rc;
 }
 
 static int cmd_off(const struct shell *sh, size_t argc, char **argv) {
-    const int rc = zar_off();
+    const int rc = zaf_off();
     if (rc) shprint(sh, "error: %d", rc);
+    return rc;
+}
+
+static int cmd_clear(const struct shell *sh, size_t argc, char **argv) {
+    const int rc = zaf_clear_persisted();
+    if (rc) {
+        shprint(sh, "error: %d", rc);
+    } else {
+        shprint(sh, "persisted settings cleared");
+    }
     return rc;
 }
 
 static void print_named_event(const struct shell *sh, const char *name,
                               const uint8_t event_idx, const uint8_t sub_idx) {
-    struct zar_event_info info;
-    if (zar_event_get(event_idx, sub_idx, &info) != 0) {
+    struct zaf_event_info info;
+    if (zaf_event_get(event_idx, sub_idx, &info) != 0) {
         return;
     }
     shprint(sh, "[%s]", name);
@@ -278,40 +288,40 @@ static void print_named_event(const struct shell *sh, const char *name,
 }
 
 static int cmd_status(const struct shell *sh, size_t argc, char **argv) {
-    shprint(sh, "state: %s", zar_is_on() ? "on" : "off");
+    shprint(sh, "state: %s", zaf_is_on() ? "on" : "off");
 
-    print_named_event(sh, "idle",        ZAR_EVTIDX_IDLE,        0);
-    print_named_event(sh, "usb-conn",    ZAR_EVTIDX_USB_CONN,    0);
-    print_named_event(sh, "usb-disconn", ZAR_EVTIDX_USB_DISCONN, 0);
-    print_named_event(sh, "ble-profile", ZAR_EVTIDX_BLE_PROFILE, 0);
-    print_named_event(sh, "no-endpoint", ZAR_EVTIDX_NO_ENDPOINT, 0);
+    print_named_event(sh, "idle",        ZAF_EVTIDX_IDLE,        0);
+    print_named_event(sh, "usb-conn",    ZAF_EVTIDX_USB_CONN,    0);
+    print_named_event(sh, "usb-disconn", ZAF_EVTIDX_USB_DISCONN, 0);
+    print_named_event(sh, "ble-profile", ZAF_EVTIDX_BLE_PROFILE, 0);
+    print_named_event(sh, "no-endpoint", ZAF_EVTIDX_NO_ENDPOINT, 0);
 
-    const uint8_t batt_levels = zar_batt_level_count();
-    for (uint8_t lvl = 0; lvl < batt_levels; lvl++) {
+    for (uint8_t lvl = 0; lvl < ZAF_BATT_LEVEL_COUNT; lvl++) {
         char name[16];
         snprintf(name, sizeof(name), "batt-warn %d", lvl + 1);
-        print_named_event(sh, name, ZAR_EVTIDX_BATT_WARN, lvl);
+        print_named_event(sh, name, ZAF_EVTIDX_BATT_WARN, lvl);
     }
-    for (uint8_t lvl = 0; lvl < batt_levels; lvl++) {
+    for (uint8_t lvl = 0; lvl < ZAF_BATT_LEVEL_COUNT; lvl++) {
         char name[16];
         snprintf(name, sizeof(name), "batt-crit %d", lvl + 1);
-        print_named_event(sh, name, ZAR_EVTIDX_BATT_CRIT, lvl);
+        print_named_event(sh, name, ZAF_EVTIDX_BATT_CRIT, lvl);
     }
 
-    const uint8_t layers = zar_layer_count();
+    const uint8_t layers = zaf_layer_count();
     for (uint8_t layer = 0; layer < layers; layer++) {
         char name[16];
         snprintf(name, sizeof(name), "layer %d", layer);
-        print_named_event(sh, name, ZAR_EVTIDX_LAYER, layer);
+        print_named_event(sh, name, ZAF_EVTIDX_LAYER, layer);
     }
 
     return 0;
 }
 
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_argb,
-    SHELL_CMD(on,     NULL, "Enable RGB",  cmd_on),
-    SHELL_CMD(off,    NULL, "Disable RGB", cmd_off),
+    SHELL_CMD(on,     NULL, "Enable feedback",  cmd_on),
+    SHELL_CMD(off,    NULL, "Disable feedback", cmd_off),
     SHELL_CMD(status, NULL, "Show state and all event configs", cmd_status),
+    SHELL_CMD(clear,  NULL, "Clear all persisted settings", cmd_clear),
     SHELL_CMD_ARG(evt, NULL,
         "Inspect or modify an event's LED config.\n"
         "Usage: argb evt <layer <n>|batt-warn <1-3>|batt-crit <1-3>|idle|usb-conn|usb-disconn|ble-profile|no-endpoint>"
@@ -323,4 +333,4 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_argb,
     SHELL_SUBCMD_SET_END
 );
 
-SHELL_CMD_REGISTER(argb, &sub_argb, "Adaptive RGB control", NULL);
+SHELL_CMD_REGISTER(argb, &sub_argb, "Adaptive Feedback control", NULL);

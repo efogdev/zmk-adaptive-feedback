@@ -1,54 +1,59 @@
-config ZMK_ADAPTIVE_RGB
-    bool "Adaptive RGB"
+config ZMK_ADAPTIVE_FEEDBACK
+    bool "Adaptive Feedback"
     select LED_STRIP
     default y
 
-if ZMK_ADAPTIVE_RGB
+if ZMK_ADAPTIVE_FEEDBACK
 
-config ZMK_ADAPTIVE_RGB_MAX_COLORS
+config ZMK_ADAPTIVE_FEEDBACK_MAX_COLORS
     int "Maximum number of colors per event entry"
-    default 8
+    default 4
     range 1 16
 
-config ZMK_ADAPTIVE_RGB_BATT_WARN_THRESH_1
+config ZMK_ADAPTIVE_FEEDBACK_BATT_WARN_THRESH_1
     int "Battery warning threshold 1 (%)"
     default 30
     range 0 100
 
-config ZMK_ADAPTIVE_RGB_BATT_WARN_THRESH_2
+config ZMK_ADAPTIVE_FEEDBACK_BATT_WARN_THRESH_2
     int "Battery warning threshold 2 (%)"
     default 25
     range 0 100
 
-config ZMK_ADAPTIVE_RGB_BATT_WARN_THRESH_3
+config ZMK_ADAPTIVE_FEEDBACK_BATT_WARN_THRESH_3
     int "Battery warning threshold 3 (%)"
     default 20
     range 0 100
 
-config ZMK_ADAPTIVE_RGB_BATT_CRIT_THRESH_1
+config ZMK_ADAPTIVE_FEEDBACK_BATT_CRIT_THRESH_1
     int "Battery critical threshold 1 (%)"
     default 15
     range 0 100
 
-config ZMK_ADAPTIVE_RGB_BATT_CRIT_THRESH_2
+config ZMK_ADAPTIVE_FEEDBACK_BATT_CRIT_THRESH_2
     int "Battery critical threshold 2 (%)"
     default 10
     range 0 100
 
-config ZMK_ADAPTIVE_RGB_BATT_CRIT_THRESH_3
+config ZMK_ADAPTIVE_FEEDBACK_BATT_CRIT_THRESH_3
     int "Battery critical threshold 3 (%)"
     default 5
     range 0 100
 
-config ZMK_ADAPTIVE_RGB_TICK_MS
-    int "Animation tick interval in milliseconds"
-    default 50
-    range 16 500
+config ZMK_ADAPTIVE_FEEDBACK_TICK_MS
+    int "Animation tick interval (msec)"
+    default 25
+    range 10 500
 
-config ZMK_ADAPTIVE_RGB_BRIGHTNESS
+config ZMK_ADAPTIVE_FEEDBACK_BRIGHTNESS
     int "Global brightness (0-100%)"
     default 100
     range 0 100
+
+config ZMK_ADAPTIVE_FEEDBACK_BREATHE_STEPS
+    int "Breathe animation step count"
+    default 1500
+    range 100 10000
 
 endif
 
