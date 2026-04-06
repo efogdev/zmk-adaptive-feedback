@@ -49,6 +49,15 @@ child-binding:
         - "ble-profile-changed"
         - "idle"
         - "no-endpoint"
+        - "studio-unlocked"
+        - "studio-locked"
+        - "custom"
+
+    custom-event-name:
+      type: string
+      description: >
+        Name of the custom event to configure (must match a ZAF_CUSTOM_EVENT_DEFINE name).
+        Only used when event-type is "custom".
 
     layer-index:
       type: int
@@ -85,6 +94,60 @@ child-binding:
     flash-duration-ms:
       type: int
       default: 300
+
+    flash-ease-in-ms:
+      type: int
+      default: 0
+      description: >
+        Duration of the fade-in easing phase at the start of the flash (ms).
+        0 means the LED turns ON instantly (default).
+
+    flash-ease-in-fn:
+      type: string
+      default: "linear"
+      enum:
+        - "linear"
+        - "quad-in"
+        - "quad-out"
+        - "quad-in-out"
+        - "cubic-in"
+        - "cubic-out"
+        - "cubic-in-out"
+        - "quart-in"
+        - "quart-out"
+        - "quart-in-out"
+        - "expo-in"
+        - "expo-out"
+        - "bounce-out"
+        - "bounce-in"
+      description: Easing curve applied during the flash fade-in phase.
+
+    flash-ease-out-ms:
+      type: int
+      default: 0
+      description: >
+        Duration of the fade-out easing phase at the end of the flash (ms).
+        0 means the LED turns OFF instantly (default).
+
+    flash-ease-out-fn:
+      type: string
+      default: "linear"
+      enum:
+        - "linear"
+        - "quad-in"
+        - "quad-out"
+        - "quad-in-out"
+        - "cubic-in"
+        - "cubic-out"
+        - "cubic-in-out"
+        - "quart-in"
+        - "quart-out"
+        - "quart-in-out"
+        - "expo-in"
+        - "expo-out"
+        - "bounce-out"
+        - "bounce-in"
+      description: Easing curve applied during the flash fade-out phase.
 
     feedback-duration:
       type: int
