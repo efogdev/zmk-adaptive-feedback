@@ -11,6 +11,15 @@ properties:
     type: int
     required: true
 
+  error-slots:
+    type: int
+
+  error-slots-reverse:
+    type: boolean
+    description: >
+      When set, error sections are allocated from the end of the chain
+      (slot 0 is at the end, slot N is at the beginning).
+
   ext-power:
     type: phandle
     required: false
@@ -37,6 +46,9 @@ child-binding:
   description: Per-event LED configuration
 
   properties:
+    label:
+      type: string
+
     event-type:
       type: string
       required: true
@@ -52,6 +64,7 @@ child-binding:
         - "studio-unlocked"
         - "studio-locked"
         - "custom"
+        - "error"
 
     custom-event-name:
       type: string
@@ -66,6 +79,13 @@ child-binding:
     battery-level:
       type: int
       default: 1
+
+    error-slot-index:
+      type: int
+      default: 0
+      description: >
+        Error slot index (0-based). Only used when event-type is "error".
+        Selects which error slot to configure.
 
     colors:
       type: uint8-array
@@ -152,3 +172,10 @@ child-binding:
     feedback-duration:
       type: int
       default: 0
+
+    breathe-duration-ms:
+      type: int
+      default: 3000
+      description: >
+        Duration of a single breathe cycle in milliseconds.
+        Only used when animation is "breathe".

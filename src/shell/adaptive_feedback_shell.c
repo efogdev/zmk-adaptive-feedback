@@ -110,6 +110,14 @@ static int parse_event_spec(const struct shell *sh,
         *event_idx = ZAF_EVTIDX_STUDIO_UNLOCK;
     } else if (strcmp(type, "studio-lock") == 0) {
         *event_idx = ZAF_EVTIDX_STUDIO_LOCK;
+    } else if (strcmp(type, "error") == 0) {
+        if (argc < 2) {
+            shprint(sh, "error requires a slot index");
+            return -EINVAL;
+        }
+        *event_idx = ZAF_EVTIDX_ERROR;
+        *sub_idx   = (uint8_t)strtol(argv[1], NULL, 10);
+        *consumed  = 2;
     } else {
         STRUCT_SECTION_FOREACH(zaf_custom_event, cevt) {
             if (strcmp(type, cevt->name) == 0) {
@@ -125,6 +133,9 @@ static int parse_event_spec(const struct shell *sh,
 }
 
 static void print_event_info(const struct shell *sh, const struct zaf_event_info *info) {
+    if (info->label != NULL) {
+        shprint(sh, "  label:      %s", info->label);
+    }
     shprint(sh, "  anim:       %s",
             info->anim < ARRAY_SIZE(zaf_anim_names) ? zaf_anim_names[info->anim] : "?");
     shprint(sh, "  colors:     %d", info->color_count);
@@ -141,6 +152,7 @@ static void print_event_info(const struct shell *sh, const struct zaf_event_info
             info->flash_ease_out_fn < ARRAY_SIZE(zaf_ease_fn_names)
                 ? zaf_ease_fn_names[info->flash_ease_out_fn] : "?");
     shprint(sh, "  feedback:   %dms", info->feedback_dur_ms);
+    shprint(sh, "  breathe:    %dms", info->breathe_dur_ms);
     shprint(sh, "  persistent: %s", info->persistent ? "yes" : "no");
 }
 
@@ -266,6 +278,9 @@ static int cmd_evt(const struct shell *sh, const size_t argc, char **argv) {
         } else if (strcmp(prop, "feedback") == 0) {
             if (nvals < 1) { shprint(sh, "usage: feedback <dur_ms>"); return -EINVAL; }
             rc = zaf_custom_event_set_feedback(custom, (uint16_t)strtol(vals[0], NULL, 10));
+        } else if (strcmp(prop, "breathe") == 0) {
+            if (nvals < 1) { shprint(sh, "usage: breathe <dur_ms>"); return -EINVAL; }
+            rc = zaf_custom_event_set_breathe(custom, (uint16_t)strtol(vals[0], NULL, 10));
         } else {
             shprint(sh, "unknown property '%s'", prop);
             return -EINVAL;
@@ -353,6 +368,13 @@ static int cmd_evt(const struct shell *sh, const size_t argc, char **argv) {
         }
         rc = zaf_event_set_feedback(event_idx, sub_idx,
                                     (uint16_t)strtol(vals[0], NULL, 10));
+    } else if (strcmp(prop, "breathe") == 0) {
+        if (nvals < 1) {
+            shprint(sh, "usage: breathe <dur_ms>");
+            return -EINVAL;
+        }
+        rc = zaf_event_set_breathe(event_idx, sub_idx,
+                                   (uint16_t)strtol(vals[0], NULL, 10));
     } else {
         shprint(sh, "unknown property '%s'", prop);
         return -EINVAL;
@@ -406,6 +428,12 @@ static void print_custom_event(const struct shell *sh, const struct zaf_custom_e
 static int cmd_status(const struct shell *sh, size_t argc, char **argv) {
     shprint(sh, "state: %s", zaf_is_on() ? "on" : "off");
 
+    for (uint8_t i = 0; i < zaf_error_slots_count(); i++) {
+        char name[16];
+        snprintf(name, sizeof(name), "error %d", i);
+        print_named_event(sh, name, ZAF_EVTIDX_ERROR, i);
+    }
+
     print_named_event(sh, "idle",           ZAF_EVTIDX_IDLE,          0);
     print_named_event(sh, "usb-conn",       ZAF_EVTIDX_USB_CONN,      0);
     print_named_event(sh, "usb-disconn",    ZAF_EVTIDX_USB_DISCONN,   0);
@@ -439,6 +467,40 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv) {
     return 0;
 }
 
+static int cmd_error(const struct shell *sh, const size_t argc, char **argv) {
+    if (argc < 3) {
+        shprint(sh, "usage: argb error <slot> <trigger|clear|clear-all>");
+        return -EINVAL;
+    }
+
+    uint8_t slot = (uint8_t)strtol(argv[1], NULL, 10);
+    const char *action = argv[2];
+    int rc = 0;
+
+    if (strcmp(action, "trigger") == 0) {
+        rc = zaf_error_trigger(slot);
+        if (rc == 0) {
+            shprint(sh, "error slot %d triggered", slot);
+        }
+    } else if (strcmp(action, "clear") == 0) {
+        rc = zaf_error_clear(slot);
+        if (rc == 0) {
+            shprint(sh, "error slot %d cleared", slot);
+        }
+    } else if (strcmp(action, "clear-all") == 0) {
+        rc = zaf_error_clear_all();
+        shprint(sh, "all error slots cleared");
+    } else {
+        shprint(sh, "unknown action '%s' (trigger|clear|clear-all)", action);
+        return -EINVAL;
+    }
+
+    if (rc) {
+        shprint(sh, "error: %d", rc);
+    }
+    return rc;
+}
+
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_argb,
     SHELL_CMD(on,     NULL, "Enable feedback",  cmd_on),
     SHELL_CMD(off,    NULL, "Disable feedback", cmd_off),
@@ -447,7 +509,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_argb,
     SHELL_CMD_ARG(evt, NULL,
         "Inspect or modify an event's LED config.\n"
         "Usage: argb evt <layer <n>|batt-warn <1-3>|batt-crit <1-3>|idle|usb-conn|usb-disconn|"
-        "ble-profile|no-endpoint|studio-unlock|studio-lock|<custom-name>>"
+        "ble-profile|no-endpoint|studio-unlock|studio-lock|error <n>|<custom-name>>"
         " <show|color [<idx>] <r> <g> <b>|anim <solid|blink|breathe|flash>"
         "|blink <on_ms> <off_ms>|flash <dur_ms>"
         "|flash-ease-in <ms> <fn>|flash-ease-out <ms> <fn>|feedback <dur_ms>>\n"
@@ -457,8 +519,13 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_argb,
         "  flash-ease-out <ms> <fn>  -- fade-out duration and curve for flash animation\n"
         "  fn: linear|quad-in|quad-out|quad-in-out|cubic-in|cubic-out|cubic-in-out\n"
         "      quart-in|quart-out|quart-in-out|expo-in|expo-out|bounce-out|bounce-in\n"
-        "  feedback <dur_ms>         -- haptic/LED feedback pulse duration for this event",
+        "  feedback <dur_ms>         -- haptic/LED feedback pulse duration for this event\n"
+        "  breathe <dur_ms>          -- breathe animation cycle duration in ms (0 for global default)",
         cmd_evt, 3, 8),
+    SHELL_CMD_ARG(error, NULL,
+        "Error slot control.\n"
+        "Usage: argb error <slot> <trigger|clear|clear-all>",
+        cmd_error, 3, 3),
     SHELL_SUBCMD_SET_END
 );
 

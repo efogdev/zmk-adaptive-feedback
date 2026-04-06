@@ -55,6 +55,8 @@ struct zaf_led_config {
     uint16_t flash_ease_out_ms;
     uint8_t  flash_ease_out_fn;
     uint16_t feedback_duration_ms;
+    uint16_t breathe_duration_ms;
+    const char *label;
 };
 
 struct zaf_layer_entry {
@@ -66,6 +68,9 @@ struct zaf_device_config {
     const struct device *led_strip;
     const struct device *ext_power;
     uint8_t chain_length;
+    uint8_t error_slots;
+    uint16_t error_section_size;
+    bool error_slots_reverse;
     bool feedback_enabled;
     uint16_t feedback_delay_ms;
     const struct gpio_dt_spec *feedback_gpio;
@@ -80,11 +85,13 @@ struct zaf_device_config {
     struct zaf_led_config evt_studio_unlock;
     struct zaf_led_config evt_studio_lock;
     struct zaf_layer_entry dt_layers[ZMK_KEYMAP_LAYERS_LEN];
+    struct zaf_led_config dt_error_slots[ZAF_MAX_ERROR_SLOTS];
 };
 
 struct zaf_evt_override {
     struct zaf_led_config cfg;
     bool valid;
+    bool cleared;
 };
 
 struct zaf_runtime_state {
@@ -102,6 +109,7 @@ struct zaf_runtime_state {
     struct zaf_evt_override rt_batt_crit[ZAF_BATT_LEVEL_COUNT];
     struct zaf_evt_override rt_studio_unlock;
     struct zaf_evt_override rt_studio_lock;
+    struct zaf_evt_override rt_error_slots[ZAF_MAX_ERROR_SLOTS];
     uint8_t active_layer;
     uint8_t batt_level;
     uint8_t prev_batt_level;
@@ -150,13 +158,16 @@ struct zaf_evt_persisted {
     struct zaf_evt_override layers[ZMK_KEYMAP_LAYERS_LEN];
     struct zaf_evt_override studio_unlock;
     struct zaf_evt_override studio_lock;
+    struct zaf_evt_override error_slots[ZAF_MAX_ERROR_SLOTS];
 };
 
 struct zaf_dt_child {
     uint8_t event_type_idx;
     const char *custom_name;
+    const char *label;
     uint8_t layer_index;
     uint8_t batt_level;
+    uint8_t error_slot_index;
     uint8_t color_bytes[CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_COLORS * 3];
     uint8_t color_count;
     uint8_t animation;
@@ -169,6 +180,7 @@ struct zaf_dt_child {
     uint16_t flash_ease_out_ms;
     uint8_t  flash_ease_out_fn;
     uint16_t feedback_duration_ms;
+    uint16_t breathe_duration_ms;
 };
 
 #define ZAF_CHILD_ENTRY(child)                                                              \
@@ -176,8 +188,11 @@ struct zaf_dt_child {
         .event_type_idx    = DT_ENUM_IDX(child, event_type),                               \
         .custom_name       = COND_CODE_1(DT_NODE_HAS_PROP(child, custom_event_name),       \
                                          (DT_PROP(child, custom_event_name)), (NULL)),      \
+        .label             = COND_CODE_1(DT_NODE_HAS_PROP(child, label),                   \
+                                         (DT_PROP(child, label)), (NULL)),                  \
         .layer_index       = DT_PROP_OR(child, layer_index, 0),                            \
         .batt_level        = DT_PROP_OR(child, battery_level, 1),                          \
+        .error_slot_index  = DT_PROP_OR(child, error_slot_index, 0),                       \
         .color_bytes       = DT_PROP(child, colors),                                       \
         .color_count       = DT_PROP_LEN(child, colors) / 3,                               \
         .animation         = DT_ENUM_IDX_OR(child, animation, 0),                          \
@@ -190,6 +205,7 @@ struct zaf_dt_child {
         .flash_ease_out_ms = DT_PROP_OR(child, flash_ease_out_ms, 0),                      \
         .flash_ease_out_fn = DT_ENUM_IDX_OR(child, flash_ease_out_fn, 0),                  \
         .feedback_duration_ms = DT_PROP_OR(child, feedback_duration, 0),                   \
+        .breathe_duration_ms  = DT_PROP_OR(child, breathe_duration_ms, 3000),              \
     },
 
 #define _ZAF_COUNT_CHILD(child) +1
@@ -242,6 +258,8 @@ static void zaf_clear_pixels(void) {
 
 static struct zaf_evt_override *zaf_evt_rt_slot(uint8_t event_idx, uint8_t sub_idx);
 static const struct zaf_led_config *zaf_evt_eff_cfg(uint8_t event_idx, uint8_t sub_idx);
+static const struct zaf_led_config *zaf_error_eff_cfg(uint8_t slot_idx);
+static void zaf_apply_error_sections(void);
 
 static const struct zaf_led_config *zaf_resolve(void) {
     if (zaf_state.override_active) {
@@ -458,7 +476,10 @@ static void zaf_apply_animation(const struct zaf_led_config *cfg) {
     }
 
     case ZAF_ANIM_BREATHE: {
-        const uint16_t breathe_steps = (uint16_t)ZRC_GET("argb/bstp", CONFIG_ZMK_ADAPTIVE_FEEDBACK_BREATHE_STEPS);
+        const uint32_t dur = cfg->breathe_duration_ms > 0 ? cfg->breathe_duration_ms
+            : (uint32_t)ZRC_GET("argb/breathe_dft_dur", CONFIG_ZMK_ADAPTIVE_FEEDBACK_BREATHE_DEFAULT_MS);
+        const int32_t tick_ms = ZRC_GET("argb/tick", CONFIG_ZMK_ADAPTIVE_FEEDBACK_TICK_MS);
+        const uint16_t breathe_steps = (tick_ms > 0) ? (uint16_t)(dur / (uint32_t)tick_ms) : 60;
         const int step = (int)zaf_state.anim_step - (int)(breathe_steps / 2);
         const int abs_step = (step < 0) ? -step : step;
         const int half_steps = (int)(breathe_steps / 2);
@@ -471,7 +492,7 @@ static void zaf_apply_animation(const struct zaf_led_config *cfg) {
             .b = (uint8_t)((base.b * scale) / 100),
         };
         zaf_fill(bc);
-        zaf_state.anim_step += 10;
+        zaf_state.anim_step++;
         if (zaf_state.anim_step >= breathe_steps) {
             zaf_state.anim_step = 0;
             zaf_state.color_idx = (zaf_state.color_idx + 1) % cfg->color_count;
@@ -611,10 +632,23 @@ static void zaf_tick(struct k_work *work) {
     bool output_is_static_dark = false;
 
     if (cfg == NULL) {
-        zaf_clear_pixels();
-        output_is_static_dark = true;
+        bool any_error_active = false;
+        for (uint8_t s = 0; s < zaf_config.error_slots; s++) {
+            const struct zaf_led_config *ecfg = zaf_error_eff_cfg(s);
+            if (ecfg != NULL && ecfg->color_count > 0) {
+                any_error_active = true;
+                break;
+            }
+        }
+        if (!any_error_active) {
+            zaf_clear_pixels();
+            output_is_static_dark = true;
+        } else {
+            zaf_apply_error_sections();
+        }
     } else {
         zaf_apply_animation(cfg);
+        zaf_apply_error_sections();
         bool all_zero = true;
         for (int i = 0; i < zaf_config.chain_length; i++) {
             if (zaf_pixels[i].r || zaf_pixels[i].g || zaf_pixels[i].b) {
@@ -638,7 +672,18 @@ static void zaf_tick(struct k_work *work) {
     }
 
     if (output_is_static_dark) {
-        k_timer_stop(&zaf_timer);
+        bool error_anim_needs_timer = false;
+        for (uint8_t s = 0; s < zaf_config.error_slots; s++) {
+            const struct zaf_led_config *ecfg = zaf_error_eff_cfg(s);
+            if (ecfg && ecfg->color_count > 0 &&
+                ecfg->animation != ZAF_ANIM_SOLID) {
+                error_anim_needs_timer = true;
+                break;
+            }
+        }
+        if (!error_anim_needs_timer) {
+            k_timer_stop(&zaf_timer);
+        }
     }
 }
 
@@ -694,6 +739,9 @@ static void zaf_save_evt_work_fn(struct k_work *work) {
     }
     for (int i = 0; i < ZMK_KEYMAP_LAYERS_LEN; i++) {
         p.layers[i] = zaf_state.rt_layers[i];
+    }
+    for (uint8_t i = 0; i < zaf_config.error_slots && i < ZAF_MAX_ERROR_SLOTS; i++) {
+        p.error_slots[i] = zaf_state.rt_error_slots[i];
     }
     settings_save_one("argb/evtcfg", &p, sizeof(p));
 }
@@ -757,6 +805,9 @@ static int zaf_settings_set(const char *name, const size_t len, const settings_r
         for (int i = 0; i < ZMK_KEYMAP_LAYERS_LEN; i++) {
             zaf_state.rt_layers[i] = p.layers[i];
         }
+        for (uint8_t i = 0; i < zaf_config.error_slots && i < ZAF_MAX_ERROR_SLOTS; i++) {
+            zaf_state.rt_error_slots[i] = p.error_slots[i];
+        }
         return 0;
     }
 
@@ -807,7 +858,9 @@ static void zaf_apply_dt_children(void) {
             .flash_ease_out_ms    = c->flash_ease_out_ms,
             .flash_ease_out_fn    = c->flash_ease_out_fn,
             .feedback_duration_ms = c->feedback_duration_ms,
+            .breathe_duration_ms  = c->breathe_duration_ms,
             .color_count          = MIN(c->color_count, CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_COLORS),
+            .label                = c->label,
         };
         for (uint8_t j = 0; j < c->color_count && j < CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_COLORS; j++) {
             cfg.colors[j].r = c->color_bytes[j * 3];
@@ -866,13 +919,21 @@ static void zaf_apply_dt_children(void) {
                         cevt->info.flash_ease_out_ms = cfg.flash_ease_out_ms;
                         cevt->info.flash_ease_out_fn = cfg.flash_ease_out_fn;
                         cevt->info.feedback_dur_ms  = cfg.feedback_duration_ms;
+                        cevt->info.breathe_dur_ms   = cfg.breathe_duration_ms;
                         cevt->info.persistent       = cfg.persistent;
+                        cevt->info.label            = cfg.label;
                         for (uint8_t j = 0; j < cfg.color_count; j++) {
                             cevt->info.colors[j] = cfg.colors[j];
                         }
                         break;
                     }
                 }
+            }
+            break;
+        case ZAF_EVTIDX_ERROR:
+            if (c->error_slot_index < zaf_config.error_slots) {
+                zaf_config.dt_error_slots[c->error_slot_index] = cfg;
+                zaf_config.dt_error_slots[c->error_slot_index].persistent = true;
             }
             break;
         default: break;
@@ -887,6 +948,17 @@ static void zaf_eval_no_endpoint(void) {
 static int zaf_init(void) {
     zaf_config.led_strip    = DEVICE_DT_GET(DT_INST_PHANDLE(0, led_strip));
     zaf_config.chain_length = DT_INST_PROP(0, chain_length);
+
+    zaf_config.error_slots = DT_INST_PROP_OR(0, error_slots, 0);
+    if (zaf_config.error_slots > ZAF_MAX_ERROR_SLOTS) {
+        zaf_config.error_slots = ZAF_MAX_ERROR_SLOTS;
+    }
+    if (zaf_config.error_slots > 0 && zaf_config.chain_length > 0) {
+        zaf_config.error_section_size = zaf_config.chain_length / zaf_config.error_slots;
+    } else {
+        zaf_config.error_section_size = 0;
+    }
+    zaf_config.error_slots_reverse = DT_INST_PROP(0, error_slots_reverse);
 
 #if DT_INST_NODE_HAS_PROP(0, ext_power)
     zaf_config.ext_power = DEVICE_DT_GET(DT_INST_PHANDLE(0, ext_power));
@@ -945,7 +1017,7 @@ static int zaf_init(void) {
     zrc_register("argb/bc3",  CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_CRIT_THRESH_3, 0,   100);
     zrc_register("argb/tick", CONFIG_ZMK_ADAPTIVE_FEEDBACK_TICK_MS,            1,   100);
     zrc_register("argb/brt",  CONFIG_ZMK_ADAPTIVE_FEEDBACK_BRIGHTNESS,         0,   100);
-    zrc_register("argb/bstp", CONFIG_ZMK_ADAPTIVE_FEEDBACK_BREATHE_STEPS,      100, 10000);
+    zrc_register("argb/breathe_dft_dur", CONFIG_ZMK_ADAPTIVE_FEEDBACK_BREATHE_DEFAULT_MS,      100, 10000);
 #endif
 
     settings_load_subtree("argb");
@@ -1020,6 +1092,9 @@ static struct zaf_evt_override *zaf_evt_rt_slot(const uint8_t event_idx, const u
     case ZAF_EVTIDX_NO_ENDPOINT:    return &zaf_state.rt_no_endpoint;
     case ZAF_EVTIDX_STUDIO_UNLOCK:  return &zaf_state.rt_studio_unlock;
     case ZAF_EVTIDX_STUDIO_LOCK:    return &zaf_state.rt_studio_lock;
+    case ZAF_EVTIDX_ERROR:
+        if (sub_idx < zaf_config.error_slots) return &zaf_state.rt_error_slots[sub_idx];
+        return NULL;
     default:                         return NULL;
     }
 }
@@ -1059,6 +1134,12 @@ static const struct zaf_led_config *zaf_evt_eff_cfg(const uint8_t event_idx, con
         return zaf_state.rt_studio_unlock.valid ? &zaf_state.rt_studio_unlock.cfg : &zaf_config.evt_studio_unlock;
     case ZAF_EVTIDX_STUDIO_LOCK:
         return zaf_state.rt_studio_lock.valid ? &zaf_state.rt_studio_lock.cfg : &zaf_config.evt_studio_lock;
+    case ZAF_EVTIDX_ERROR:
+        if (sub_idx < zaf_config.error_slots) {
+            if (zaf_state.rt_error_slots[sub_idx].valid) return &zaf_state.rt_error_slots[sub_idx].cfg;
+            return &zaf_config.dt_error_slots[sub_idx];
+        }
+        return NULL;
     default:
         return NULL;
     }
@@ -1083,7 +1164,9 @@ int zaf_event_get(const uint8_t event_idx, const uint8_t sub_idx, struct zaf_eve
     out->flash_ease_out_ms = cfg->flash_ease_out_ms;
     out->flash_ease_out_fn = cfg->flash_ease_out_fn;
     out->feedback_dur_ms   = cfg->feedback_duration_ms;
+    out->breathe_dur_ms    = cfg->breathe_duration_ms;
     out->persistent        = cfg->persistent;
+    out->label             = cfg->label;
     return 0;
 }
 
@@ -1155,6 +1238,10 @@ static void set_feedback(struct zaf_led_config *cfg, void *arg) {
     cfg->feedback_duration_ms = *(uint16_t *)arg;
 }
 
+static void set_breathe(struct zaf_led_config *cfg, void *arg) {
+    cfg->breathe_duration_ms = *(uint16_t *)arg;
+}
+
 int zaf_event_set_color(const uint8_t event_idx, const uint8_t sub_idx, const struct zaf_rgb color) {
     return zaf_evt_set_impl(event_idx, sub_idx, set_color_single, (void *)&color, false);
 }
@@ -1197,6 +1284,10 @@ int zaf_event_set_feedback(const uint8_t event_idx, const uint8_t sub_idx, const
     return zaf_evt_set_impl(event_idx, sub_idx, set_feedback, (void *)&dur_ms, false);
 }
 
+int zaf_event_set_breathe(const uint8_t event_idx, const uint8_t sub_idx, const uint16_t dur_ms) {
+    return zaf_evt_set_impl(event_idx, sub_idx, set_breathe, (void *)&dur_ms, false);
+}
+
 int zaf_clear_persisted(void) {
     zaf_state.on              = true;
     zaf_state.override_active = false;
@@ -1216,6 +1307,10 @@ int zaf_clear_persisted(void) {
     }
     for (int i = 0; i < ZMK_KEYMAP_LAYERS_LEN; i++) {
         zaf_state.rt_layers[i].valid = false;
+    }
+    for (uint8_t i = 0; i < zaf_config.error_slots && i < ZAF_MAX_ERROR_SLOTS; i++) {
+        zaf_state.rt_error_slots[i].valid = false;
+        zaf_state.rt_error_slots[i].cleared = false;
     }
 
     char key[48];
@@ -1478,4 +1573,410 @@ int zaf_custom_event_set_feedback(struct zaf_custom_event *evt, const uint16_t d
     }
     evt->info.feedback_dur_ms = dur_ms;
     return zaf_save_custom_cfg();
+}
+
+int zaf_custom_event_set_breathe(struct zaf_custom_event *evt, const uint16_t dur_ms) {
+    if (!evt) {
+        return -EINVAL;
+    }
+    evt->info.breathe_dur_ms = dur_ms;
+    return zaf_save_custom_cfg();
+}
+
+uint8_t zaf_error_slots_count(void) {
+    return zaf_config.error_slots;
+}
+
+static struct zaf_evt_override *zaf_error_rt_slot(const uint8_t slot_idx) {
+    if (slot_idx >= zaf_config.error_slots) {
+        return NULL;
+    }
+    return &zaf_state.rt_error_slots[slot_idx];
+}
+
+static const struct zaf_led_config *zaf_error_eff_cfg(const uint8_t slot_idx) {
+    if (slot_idx >= zaf_config.error_slots) {
+        return NULL;
+    }
+    if (zaf_state.rt_error_slots[slot_idx].cleared) {
+        return NULL;
+    }
+    if (zaf_state.rt_error_slots[slot_idx].valid) {
+        return &zaf_state.rt_error_slots[slot_idx].cfg;
+    }
+    return &zaf_config.dt_error_slots[slot_idx];
+}
+
+int zaf_error_get(const uint8_t slot_idx, struct zaf_event_info *out) {
+    const struct zaf_led_config *cfg = zaf_error_eff_cfg(slot_idx);
+    if (!cfg) {
+        return -EINVAL;
+    }
+    const uint8_t n = MIN(cfg->color_count, ZAF_INFO_MAX_COLORS);
+    out->color_count = n;
+    for (uint8_t i = 0; i < n; i++) {
+        out->colors[i] = cfg->colors[i];
+    }
+    out->anim              = cfg->animation;
+    out->blink_on_ms       = cfg->blink_on_ms;
+    out->blink_off_ms      = cfg->blink_off_ms;
+    out->flash_dur_ms      = cfg->flash_duration_ms;
+    out->flash_ease_in_ms  = cfg->flash_ease_in_ms;
+    out->flash_ease_in_fn  = cfg->flash_ease_in_fn;
+    out->flash_ease_out_ms = cfg->flash_ease_out_ms;
+    out->flash_ease_out_fn = cfg->flash_ease_out_fn;
+    out->feedback_dur_ms   = cfg->feedback_duration_ms;
+    out->breathe_dur_ms     = cfg->breathe_duration_ms;
+    out->persistent        = true;
+    out->label             = cfg->label;
+    return 0;
+}
+
+int zaf_error_set_breathe(const uint8_t slot_idx, const uint16_t dur_ms) {
+    struct zaf_evt_override *slot = zaf_error_rt_slot(slot_idx);
+    if (!slot) {
+        return -EINVAL;
+    }
+    if (!slot->valid) {
+        const struct zaf_led_config *dts = zaf_error_eff_cfg(slot_idx);
+        if (dts) {
+            slot->cfg = *dts;
+        }
+    }
+    slot->cfg.breathe_duration_ms = dur_ms;
+    slot->valid                   = true;
+    slot->cfg.persistent          = true;
+    zaf_kick_timer();
+    return zaf_save_evt_cfg();
+}
+
+int zaf_error_set_color(const uint8_t slot_idx, const struct zaf_rgb color) {
+    struct zaf_evt_override *slot = zaf_error_rt_slot(slot_idx);
+    if (!slot) {
+        return -EINVAL;
+    }
+    if (!slot->valid) {
+        const struct zaf_led_config *dts = zaf_error_eff_cfg(slot_idx);
+        if (dts) {
+            slot->cfg = *dts;
+        }
+    }
+    slot->cfg.colors[0]   = color;
+    slot->cfg.color_count = 1;
+    slot->valid           = true;
+    slot->cfg.persistent  = true;
+    zaf_kick_timer();
+    return zaf_save_evt_cfg();
+}
+
+int zaf_error_set_color_at(const uint8_t slot_idx, const uint8_t color_idx,
+                           const struct zaf_rgb color) {
+    if (color_idx >= CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_COLORS) {
+        return -EINVAL;
+    }
+    struct zaf_evt_override *slot = zaf_error_rt_slot(slot_idx);
+    if (!slot) {
+        return -EINVAL;
+    }
+    if (!slot->valid) {
+        const struct zaf_led_config *dts = zaf_error_eff_cfg(slot_idx);
+        if (dts) {
+            slot->cfg = *dts;
+        }
+    }
+    slot->cfg.colors[color_idx] = color;
+    if (color_idx >= slot->cfg.color_count) {
+        slot->cfg.color_count = color_idx + 1;
+    }
+    slot->valid      = true;
+    slot->cfg.persistent = true;
+    zaf_kick_timer();
+    return zaf_save_evt_cfg();
+}
+
+int zaf_error_set_anim(const uint8_t slot_idx, const uint8_t anim) {
+    struct zaf_evt_override *slot = zaf_error_rt_slot(slot_idx);
+    if (!slot) {
+        return -EINVAL;
+    }
+    if (!slot->valid) {
+        const struct zaf_led_config *dts = zaf_error_eff_cfg(slot_idx);
+        if (dts) {
+            slot->cfg = *dts;
+        }
+    }
+    slot->cfg.animation = anim;
+    slot->valid         = true;
+    slot->cfg.persistent = true;
+    zaf_kick_timer();
+    return zaf_save_evt_cfg();
+}
+
+int zaf_error_set_blink(const uint8_t slot_idx, const uint16_t on_ms, const uint16_t off_ms) {
+    struct zaf_evt_override *slot = zaf_error_rt_slot(slot_idx);
+    if (!slot) {
+        return -EINVAL;
+    }
+    if (!slot->valid) {
+        const struct zaf_led_config *dts = zaf_error_eff_cfg(slot_idx);
+        if (dts) {
+            slot->cfg = *dts;
+        }
+    }
+    slot->cfg.blink_on_ms  = on_ms;
+    slot->cfg.blink_off_ms = off_ms;
+    slot->valid            = true;
+    slot->cfg.persistent   = true;
+    zaf_kick_timer();
+    return zaf_save_evt_cfg();
+}
+
+int zaf_error_set_flash(const uint8_t slot_idx, const uint16_t dur_ms) {
+    struct zaf_evt_override *slot = zaf_error_rt_slot(slot_idx);
+    if (!slot) {
+        return -EINVAL;
+    }
+    if (!slot->valid) {
+        const struct zaf_led_config *dts = zaf_error_eff_cfg(slot_idx);
+        if (dts) {
+            slot->cfg = *dts;
+        }
+    }
+    slot->cfg.flash_duration_ms = dur_ms;
+    slot->valid                 = true;
+    slot->cfg.persistent        = true;
+    zaf_kick_timer();
+    return zaf_save_evt_cfg();
+}
+
+int zaf_error_set_flash_ease_in(const uint8_t slot_idx, const uint16_t ms, const uint8_t fn) {
+    struct zaf_evt_override *slot = zaf_error_rt_slot(slot_idx);
+    if (!slot) {
+        return -EINVAL;
+    }
+    if (!slot->valid) {
+        const struct zaf_led_config *dts = zaf_error_eff_cfg(slot_idx);
+        if (dts) {
+            slot->cfg = *dts;
+        }
+    }
+    slot->cfg.flash_ease_in_ms = ms;
+    slot->cfg.flash_ease_in_fn = fn;
+    slot->valid                = true;
+    slot->cfg.persistent       = true;
+    zaf_kick_timer();
+    return zaf_save_evt_cfg();
+}
+
+int zaf_error_set_flash_ease_out(const uint8_t slot_idx, const uint16_t ms, const uint8_t fn) {
+    struct zaf_evt_override *slot = zaf_error_rt_slot(slot_idx);
+    if (!slot) {
+        return -EINVAL;
+    }
+    if (!slot->valid) {
+        const struct zaf_led_config *dts = zaf_error_eff_cfg(slot_idx);
+        if (dts) {
+            slot->cfg = *dts;
+        }
+    }
+    slot->cfg.flash_ease_out_ms = ms;
+    slot->cfg.flash_ease_out_fn = fn;
+    slot->valid                 = true;
+    slot->cfg.persistent        = true;
+    zaf_kick_timer();
+    return zaf_save_evt_cfg();
+}
+
+int zaf_error_set_feedback(const uint8_t slot_idx, const uint16_t dur_ms) {
+    struct zaf_evt_override *slot = zaf_error_rt_slot(slot_idx);
+    if (!slot) {
+        return -EINVAL;
+    }
+    if (!slot->valid) {
+        const struct zaf_led_config *dts = zaf_error_eff_cfg(slot_idx);
+        if (dts) {
+            slot->cfg = *dts;
+        }
+    }
+    slot->cfg.feedback_duration_ms = dur_ms;
+    slot->valid                    = true;
+    slot->cfg.persistent           = true;
+    zaf_kick_timer();
+    return zaf_save_evt_cfg();
+}
+
+int zaf_error_trigger(const uint8_t slot_idx) {
+    if (slot_idx >= zaf_config.error_slots) {
+        return -EINVAL;
+    }
+
+    zaf_state.rt_error_slots[slot_idx].cleared = false;
+
+    const struct zaf_led_config *ecfg = zaf_error_eff_cfg(slot_idx);
+    if (!ecfg || ecfg->color_count == 0) {
+        return -EINVAL;
+    }
+
+    zaf_state.rt_error_slots[slot_idx].cfg = *ecfg;
+    zaf_state.rt_error_slots[slot_idx].cfg.persistent = true;
+    zaf_state.rt_error_slots[slot_idx].valid = true;
+    zaf_trigger_feedback(ecfg->feedback_duration_ms);
+    zaf_kick_timer();
+    return 0;
+}
+
+int zaf_error_clear(const uint8_t slot_idx) {
+    if (slot_idx >= zaf_config.error_slots) {
+        return -EINVAL;
+    }
+
+    zaf_state.rt_error_slots[slot_idx].valid = false;
+    zaf_state.rt_error_slots[slot_idx].cleared = true;
+    zaf_kick_timer();
+    return zaf_save_evt_cfg();
+}
+
+int zaf_error_clear_all(void) {
+    for (uint8_t i = 0; i < zaf_config.error_slots; i++) {
+        zaf_state.rt_error_slots[i].valid = false;
+        zaf_state.rt_error_slots[i].cleared = true;
+    }
+    zaf_kick_timer();
+    return zaf_save_evt_cfg();
+}
+
+static void zaf_apply_error_sections(void) {
+    if (zaf_config.error_slots == 0 || zaf_config.error_section_size == 0) {
+        return;
+    }
+
+    /* Always advance blink phase once before the rendering loop, using the
+     * first active BLINK error section's timing. This ensures consistent blink
+     * speed regardless of how many error sections are active. */
+    for (uint8_t s = 0; s < zaf_config.error_slots; s++) {
+        const struct zaf_led_config *ecfg = zaf_error_eff_cfg(s);
+        if (ecfg && ecfg->color_count > 0 && ecfg->animation == ZAF_ANIM_BLINK) {
+            const uint16_t phase_ms = zaf_state.blink_phase ? ecfg->blink_on_ms : ecfg->blink_off_ms;
+            const uint16_t phase_ticks = zaf_ticks_from_ms(phase_ms);
+            zaf_state.blink_phase_ticks++;
+            if (zaf_state.blink_phase_ticks >= phase_ticks) {
+                zaf_state.blink_phase = !zaf_state.blink_phase;
+                zaf_state.blink_phase_ticks = 0;
+                if (zaf_state.blink_phase) {
+                    zaf_state.color_idx = (zaf_state.color_idx + 1) % ecfg->color_count;
+                }
+            }
+            break;
+        }
+    }
+
+    for (uint8_t s = 0; s < zaf_config.error_slots; s++) {
+        const struct zaf_led_config *cfg = zaf_error_eff_cfg(s);
+        if (cfg == NULL || cfg->color_count == 0) {
+            continue;
+        }
+
+        const uint16_t start = zaf_config.error_slots_reverse
+            ? zaf_config.chain_length - ((uint16_t)s + 1) * zaf_config.error_section_size
+            : (uint16_t)s * zaf_config.error_section_size;
+        const uint16_t end   = start + zaf_config.error_section_size;
+        if (start >= zaf_config.chain_length || end > zaf_config.chain_length) {
+            continue;
+        }
+
+        const int32_t bri = ZRC_GET("argb/brt", CONFIG_ZMK_ADAPTIVE_FEEDBACK_BRIGHTNESS);
+
+        switch (cfg->animation) {
+        case ZAF_ANIM_SOLID: {
+            const struct zaf_rgb c0 = cfg->colors[0];
+            const struct led_rgb sc = {
+                .r = (uint8_t)((c0.r * bri) / 100),
+                .g = (uint8_t)((c0.g * bri) / 100),
+                .b = (uint8_t)((c0.b * bri) / 100),
+            };
+            for (uint16_t i = start; i < end && i < zaf_config.chain_length; i++) {
+                zaf_pixels[i] = sc;
+            }
+            break;
+        }
+
+        case ZAF_ANIM_BLINK: {
+            const uint8_t idx = zaf_state.color_idx % cfg->color_count;
+            const struct zaf_rgb c_cur = cfg->colors[idx];
+            struct led_rgb sc = {0, 0, 0};
+            if (zaf_state.blink_phase) {
+                sc.r = (uint8_t)((c_cur.r * bri) / 100);
+                sc.g = (uint8_t)((c_cur.g * bri) / 100);
+                sc.b = (uint8_t)((c_cur.b * bri) / 100);
+            }
+            for (uint16_t i = start; i < end && i < zaf_config.chain_length; i++) {
+                zaf_pixels[i] = sc;
+            }
+            break;
+        }
+
+        case ZAF_ANIM_BREATHE: {
+            const uint32_t dur = cfg->breathe_duration_ms > 0 ? cfg->breathe_duration_ms
+                : (uint32_t)ZRC_GET("argb/breathe_dft_dur", CONFIG_ZMK_ADAPTIVE_FEEDBACK_BREATHE_DEFAULT_MS);
+            const int32_t tick_ms = ZRC_GET("argb/tick", CONFIG_ZMK_ADAPTIVE_FEEDBACK_TICK_MS);
+            const uint16_t breathe_steps = (tick_ms > 0) ? (uint16_t)(dur / (uint32_t)tick_ms) : 60;
+            const int step = (int)zaf_state.anim_step - (int)(breathe_steps / 2);
+            const int abs_step = (step < 0) ? -step : step;
+            const int half_steps = (int)(breathe_steps / 2);
+            const uint8_t scale = (half_steps > 0) ? (uint8_t)((100 * (half_steps - abs_step)) / half_steps) : 100;
+            const uint8_t idx = zaf_state.color_idx % cfg->color_count;
+            const struct zaf_rgb base = cfg->colors[idx];
+            const struct led_rgb bc = {
+                .r = (uint8_t)(((uint16_t)base.r * scale * bri) / 10000),
+                .g = (uint8_t)(((uint16_t)base.g * scale * bri) / 10000),
+                .b = (uint8_t)(((uint16_t)base.b * scale * bri) / 10000),
+            };
+            zaf_state.anim_step++;
+            if (zaf_state.anim_step >= breathe_steps) {
+                zaf_state.anim_step = 0;
+                zaf_state.color_idx = (zaf_state.color_idx + 1) % cfg->color_count;
+            }
+            for (uint16_t i = start; i < end && i < zaf_config.chain_length; i++) {
+                zaf_pixels[i] = bc;
+            }
+            break;
+        }
+
+        case ZAF_ANIM_FLASH: {
+            if (!zaf_state.flash_active) {
+                const struct led_rgb off = {0, 0, 0};
+                for (uint16_t i = start; i < end && i < zaf_config.chain_length; i++) {
+                    zaf_pixels[i] = off;
+                }
+                break;
+            }
+            uint8_t scale = 255;
+            const uint16_t elapsed = zaf_state.flash_total_ticks - zaf_state.flash_ticks;
+            if (cfg->flash_ease_in_ms > 0 &&
+                elapsed < zaf_ticks_from_ms(cfg->flash_ease_in_ms)) {
+                const uint16_t ease_ticks = zaf_ticks_from_ms(cfg->flash_ease_in_ms);
+                const uint8_t t = (uint8_t)((uint32_t)elapsed * 255u / ease_ticks);
+                scale = zaf_ease(cfg->flash_ease_in_fn, t);
+            } else if (cfg->flash_ease_out_ms > 0 &&
+                       zaf_state.flash_ticks <= zaf_ticks_from_ms(cfg->flash_ease_out_ms)) {
+                const uint16_t ease_ticks = zaf_ticks_from_ms(cfg->flash_ease_out_ms);
+                const uint16_t out_elapsed = zaf_ticks_from_ms(cfg->flash_ease_out_ms) - zaf_state.flash_ticks;
+                const uint8_t t = (uint8_t)((uint32_t)out_elapsed * 255u / ease_ticks);
+                scale = (uint8_t)(255u - zaf_ease(cfg->flash_ease_out_fn, t));
+            }
+            const struct zaf_rgb c0 = cfg->colors[0];
+            const struct led_rgb sc = {
+                .r = (uint8_t)(((uint16_t)c0.r * scale * bri) >> 18),
+                .g = (uint8_t)(((uint16_t)c0.g * scale * bri) >> 18),
+                .b = (uint8_t)(((uint16_t)c0.b * scale * bri) >> 18),
+            };
+            for (uint16_t i = start; i < end && i < zaf_config.chain_length; i++) {
+                zaf_pixels[i] = sc;
+            }
+            break;
+        }
+
+        default: break;
+        }
+    }
 }

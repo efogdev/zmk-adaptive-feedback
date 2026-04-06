@@ -10,6 +10,16 @@ config ZMK_ADAPTIVE_FEEDBACK_MAX_COLORS
     default 4
     range 1 16
 
+config ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT
+    int "Number of battery level entries"
+    default 3
+    range 1 10
+
+config ZMK_ADAPTIVE_FEEDBACK_MAX_ERROR_SLOTS
+    int "Maximum number of error message slots"
+    default 8
+    range 1 32
+
 config ZMK_ADAPTIVE_FEEDBACK_BATT_WARN_THRESH_1
     int "Battery warning threshold 1 (%)"
     default 30
@@ -50,7 +60,7 @@ config ZMK_ADAPTIVE_FEEDBACK_BRIGHTNESS
     default 100
     range 0 100
 
-config ZMK_ADAPTIVE_FEEDBACK_BREATHE_STEPS
+config ZMK_ADAPTIVE_FEEDBACK_BREATHE_DEFAULT_MS
     int "Breathe animation step count"
     default 1500
     range 100 10000

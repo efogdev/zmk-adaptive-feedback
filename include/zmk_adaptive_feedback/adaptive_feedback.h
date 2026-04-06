@@ -35,9 +35,19 @@
 #define ZAF_EVTIDX_STUDIO_UNLOCK  8
 #define ZAF_EVTIDX_STUDIO_LOCK    9
 #define ZAF_EVTIDX_CUSTOM         10
+#define ZAF_EVTIDX_ERROR          11
 
-#define ZAF_INFO_MAX_COLORS 4
-#define ZAF_BATT_LEVEL_COUNT 3
+#ifndef ZAF_INFO_MAX_COLORS
+#define ZAF_INFO_MAX_COLORS CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_COLORS
+#endif
+
+#ifndef ZAF_BATT_LEVEL_COUNT
+#define ZAF_BATT_LEVEL_COUNT CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT
+#endif
+
+#ifndef ZAF_MAX_ERROR_SLOTS
+#define ZAF_MAX_ERROR_SLOTS CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_ERROR_SLOTS
+#endif
 
 struct zaf_rgb {
     uint8_t r;
@@ -57,7 +67,9 @@ struct zaf_event_info {
     uint16_t flash_ease_out_ms;
     uint8_t  flash_ease_out_fn;
     uint16_t feedback_dur_ms;
+    uint16_t breathe_dur_ms;
     bool persistent;
+    const char *label;
 };
 
 int zaf_on(void);
@@ -75,28 +87,16 @@ int zaf_event_set_flash(uint8_t event_idx, uint8_t sub_idx, uint16_t dur_ms);
 int zaf_event_set_flash_ease_in(uint8_t event_idx, uint8_t sub_idx, uint16_t ms, uint8_t fn);
 int zaf_event_set_flash_ease_out(uint8_t event_idx, uint8_t sub_idx, uint16_t ms, uint8_t fn);
 int zaf_event_set_feedback(uint8_t event_idx, uint8_t sub_idx, uint16_t dur_ms);
+int zaf_event_set_breathe(uint8_t event_idx, uint8_t sub_idx, uint16_t dur_ms);
 int zaf_clear_persisted(void);
 
-/**
- * A custom event that external modules can register and trigger.
- * Declare a module-level instance with ZAF_CUSTOM_EVENT_DEFINE.
- * Configure it with zaf_custom_event_set_* and fire it with
- * zaf_custom_event_trigger.  Custom events are displayed after built-in
- * transient events (USB/BLE/studio) but before the persistent layer and
- * idle states.
- */
 struct zaf_custom_event {
     const char *name;
-    struct zaf_event_info info; /* color_count == 0 means not yet configured */
+    struct zaf_event_info info;
     bool pending;
     uint16_t ticks;
 };
 
-/**
- * Declare a custom event in the current translation unit.
- * @param sym   C symbol name for the event variable.
- * @param _name Human-readable event name (string literal).
- */
 #define ZAF_CUSTOM_EVENT_DEFINE(sym, _name) \
     STRUCT_SECTION_ITERABLE(zaf_custom_event, sym) = { .name = (_name) }
 
@@ -111,3 +111,19 @@ int zaf_custom_event_set_flash(struct zaf_custom_event *evt, uint16_t dur_ms);
 int zaf_custom_event_set_flash_ease_in(struct zaf_custom_event *evt, uint16_t ms, uint8_t fn);
 int zaf_custom_event_set_flash_ease_out(struct zaf_custom_event *evt, uint16_t ms, uint8_t fn);
 int zaf_custom_event_set_feedback(struct zaf_custom_event *evt, uint16_t dur_ms);
+int zaf_custom_event_set_breathe(struct zaf_custom_event *evt, uint16_t dur_ms);
+
+uint8_t zaf_error_slots_count(void);
+int zaf_error_get(uint8_t slot_idx, struct zaf_event_info *out);
+int zaf_error_set_color(uint8_t slot_idx, struct zaf_rgb color);
+int zaf_error_set_color_at(uint8_t slot_idx, uint8_t color_idx, struct zaf_rgb color);
+int zaf_error_set_anim(uint8_t slot_idx, uint8_t anim);
+int zaf_error_set_blink(uint8_t slot_idx, uint16_t on_ms, uint16_t off_ms);
+int zaf_error_set_flash(uint8_t slot_idx, uint16_t dur_ms);
+int zaf_error_set_flash_ease_in(uint8_t slot_idx, uint16_t ms, uint8_t fn);
+int zaf_error_set_flash_ease_out(uint8_t slot_idx, uint16_t ms, uint8_t fn);
+int zaf_error_set_feedback(uint8_t slot_idx, uint16_t dur_ms);
+int zaf_error_set_breathe(uint8_t slot_idx, uint16_t dur_ms);
+int zaf_error_trigger(uint8_t slot_idx);
+int zaf_error_clear(uint8_t slot_idx);
+int zaf_error_clear_all(void);
