@@ -169,9 +169,10 @@ child-binding:
         - "bounce-in"
       description: Easing curve applied during the flash fade-out phase.
 
-    feedback-duration:
-      type: int
-      default: 0
+    feedback-pattern:
+      type: uint8-array
+      description: >
+        Feedback pattern: alternating ON/OFF durations in milliseconds.
 
     breathe-duration-ms:
       type: int

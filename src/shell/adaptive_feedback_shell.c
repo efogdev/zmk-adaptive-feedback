@@ -151,7 +151,20 @@ static void print_event_info(const struct shell *sh, const struct zaf_event_info
     shprint(sh, "  flash-ease-out: %dms fn=%s", info->flash_ease_out_ms,
             info->flash_ease_out_fn < ARRAY_SIZE(zaf_ease_fn_names)
                 ? zaf_ease_fn_names[info->flash_ease_out_fn] : "?");
-    shprint(sh, "  feedback:   %dms", info->feedback_dur_ms);
+    if (info->feedback_pattern_len > 0) {
+        char buf[ZAF_FEEDBACK_PATTERN_MAX_LEN * 8];
+        int off = 0;
+        for (uint8_t i = 0; i < info->feedback_pattern_len && off < (int)sizeof(buf) - 8; i++) {
+            off += snprintf(buf + off, sizeof(buf) - off, "%u", info->feedback_pattern[i]);
+            if (i + 1 < info->feedback_pattern_len) {
+                buf[off++] = ' ';
+            }
+        }
+        buf[off] = '\0';
+        shprint(sh, "  feedback:   [%s]", buf);
+    } else {
+        shprint(sh, "  feedback:   (none)");
+    }
     shprint(sh, "  breathe:    %dms", info->breathe_dur_ms);
     shprint(sh, "  persistent: %s", info->persistent ? "yes" : "no");
 }
@@ -199,7 +212,8 @@ static int cmd_evt(const struct shell *sh, const size_t argc, char **argv) {
             "usb-disconn|ble-profile|no-endpoint|studio-unlock|studio-lock|<custom-name>>"
             " <show|color [<idx>] <r> <g> <b>|anim <solid|blink|breathe|flash>"
             "|blink <on_ms> <off_ms>|flash <dur_ms>"
-            "|flash-ease-in <ms> <fn>|flash-ease-out <ms> <fn>|feedback <dur_ms>>");
+            "|flash-ease-in <ms> <fn>|flash-ease-out <ms> <fn>"
+            "|feedback <on_ms> [off_ms on_ms ...]>");
         return -EINVAL;
     }
 
@@ -276,8 +290,13 @@ static int cmd_evt(const struct shell *sh, const size_t argc, char **argv) {
             rc = zaf_custom_event_set_flash_ease_out(custom,
                     (uint16_t)strtol(vals[0], NULL, 10), fn);
         } else if (strcmp(prop, "feedback") == 0) {
-            if (nvals < 1) { shprint(sh, "usage: feedback <dur_ms>"); return -EINVAL; }
-            rc = zaf_custom_event_set_feedback(custom, (uint16_t)strtol(vals[0], NULL, 10));
+            if (nvals < 1) { shprint(sh, "usage: feedback <on_ms> [off_ms on_ms ...]"); return -EINVAL; }
+            uint16_t pat[ZAF_FEEDBACK_PATTERN_MAX_LEN];
+            const uint8_t plen = (uint8_t)MIN(nvals, ZAF_FEEDBACK_PATTERN_MAX_LEN);
+            for (uint8_t i = 0; i < plen; i++) {
+                pat[i] = (uint16_t)strtol(vals[i], NULL, 10);
+            }
+            rc = zaf_custom_event_set_feedback(custom, pat, plen);
         } else if (strcmp(prop, "breathe") == 0) {
             if (nvals < 1) { shprint(sh, "usage: breathe <dur_ms>"); return -EINVAL; }
             rc = zaf_custom_event_set_breathe(custom, (uint16_t)strtol(vals[0], NULL, 10));
@@ -363,11 +382,15 @@ static int cmd_evt(const struct shell *sh, const size_t argc, char **argv) {
                                            (uint16_t)strtol(vals[0], NULL, 10), fn);
     } else if (strcmp(prop, "feedback") == 0) {
         if (nvals < 1) {
-            shprint(sh, "usage: feedback <dur_ms>");
+            shprint(sh, "usage: feedback <on_ms> [off_ms on_ms ...]");
             return -EINVAL;
         }
-        rc = zaf_event_set_feedback(event_idx, sub_idx,
-                                    (uint16_t)strtol(vals[0], NULL, 10));
+        uint16_t pat[ZAF_FEEDBACK_PATTERN_MAX_LEN];
+        const uint8_t plen = (uint8_t)MIN(nvals, ZAF_FEEDBACK_PATTERN_MAX_LEN);
+        for (uint8_t i = 0; i < plen; i++) {
+            pat[i] = (uint16_t)strtol(vals[i], NULL, 10);
+        }
+        rc = zaf_event_set_feedback(event_idx, sub_idx, pat, plen);
     } else if (strcmp(prop, "breathe") == 0) {
         if (nvals < 1) {
             shprint(sh, "usage: breathe <dur_ms>");

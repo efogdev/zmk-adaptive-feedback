@@ -49,6 +49,10 @@
 #define ZAF_MAX_ERROR_SLOTS CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_ERROR_SLOTS
 #endif
 
+#ifndef ZAF_FEEDBACK_PATTERN_MAX_LEN
+#define ZAF_FEEDBACK_PATTERN_MAX_LEN CONFIG_ZMK_ADAPTIVE_FEEDBACK_FEEDBACK_PATTERN_MAX_LEN
+#endif
+
 struct zaf_rgb {
     uint8_t r;
     uint8_t g;
@@ -66,7 +70,8 @@ struct zaf_event_info {
     uint8_t  flash_ease_in_fn;
     uint16_t flash_ease_out_ms;
     uint8_t  flash_ease_out_fn;
-    uint16_t feedback_dur_ms;
+    uint16_t feedback_pattern[ZAF_FEEDBACK_PATTERN_MAX_LEN];
+    uint8_t  feedback_pattern_len;
     uint16_t breathe_dur_ms;
     bool persistent;
     const char *label;
@@ -75,6 +80,7 @@ struct zaf_event_info {
 int zaf_on(void);
 int zaf_off(void);
 bool zaf_is_on(void);
+void zaf_set_rgb_not_supported(void);
 
 uint8_t zaf_layer_count(void);
 
@@ -86,7 +92,7 @@ int zaf_event_set_blink(uint8_t event_idx, uint8_t sub_idx, uint16_t on_ms, uint
 int zaf_event_set_flash(uint8_t event_idx, uint8_t sub_idx, uint16_t dur_ms);
 int zaf_event_set_flash_ease_in(uint8_t event_idx, uint8_t sub_idx, uint16_t ms, uint8_t fn);
 int zaf_event_set_flash_ease_out(uint8_t event_idx, uint8_t sub_idx, uint16_t ms, uint8_t fn);
-int zaf_event_set_feedback(uint8_t event_idx, uint8_t sub_idx, uint16_t dur_ms);
+int zaf_event_set_feedback(uint8_t event_idx, uint8_t sub_idx, const uint16_t *pattern, uint8_t len);
 int zaf_event_set_breathe(uint8_t event_idx, uint8_t sub_idx, uint16_t dur_ms);
 int zaf_clear_persisted(void);
 
@@ -110,7 +116,7 @@ int zaf_custom_event_set_blink(struct zaf_custom_event *evt, uint16_t on_ms, uin
 int zaf_custom_event_set_flash(struct zaf_custom_event *evt, uint16_t dur_ms);
 int zaf_custom_event_set_flash_ease_in(struct zaf_custom_event *evt, uint16_t ms, uint8_t fn);
 int zaf_custom_event_set_flash_ease_out(struct zaf_custom_event *evt, uint16_t ms, uint8_t fn);
-int zaf_custom_event_set_feedback(struct zaf_custom_event *evt, uint16_t dur_ms);
+int zaf_custom_event_set_feedback(struct zaf_custom_event *evt, const uint16_t *pattern, uint8_t len);
 int zaf_custom_event_set_breathe(struct zaf_custom_event *evt, uint16_t dur_ms);
 
 uint8_t zaf_error_slots_count(void);
@@ -122,7 +128,7 @@ int zaf_error_set_blink(uint8_t slot_idx, uint16_t on_ms, uint16_t off_ms);
 int zaf_error_set_flash(uint8_t slot_idx, uint16_t dur_ms);
 int zaf_error_set_flash_ease_in(uint8_t slot_idx, uint16_t ms, uint8_t fn);
 int zaf_error_set_flash_ease_out(uint8_t slot_idx, uint16_t ms, uint8_t fn);
-int zaf_error_set_feedback(uint8_t slot_idx, uint16_t dur_ms);
+int zaf_error_set_feedback(uint8_t slot_idx, const uint16_t *pattern, uint8_t len);
 int zaf_error_set_breathe(uint8_t slot_idx, uint16_t dur_ms);
 int zaf_error_trigger(uint8_t slot_idx);
 int zaf_error_clear(uint8_t slot_idx);

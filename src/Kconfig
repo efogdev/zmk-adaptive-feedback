@@ -65,6 +65,11 @@ config ZMK_ADAPTIVE_FEEDBACK_BREATHE_DEFAULT_MS
     default 1500
     range 100 10000
 
+config ZMK_ADAPTIVE_FEEDBACK_FEEDBACK_PATTERN_MAX_LEN
+    int "Maximum number of steps in a feedback pattern"
+    default 8
+    range 1 32
+
 endif
 
 rsource "shell/Kconfig"
