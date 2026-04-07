@@ -491,8 +491,7 @@ static void zaf_apply_animation(const struct zaf_led_config *cfg) {
     }
 
     case ZAF_ANIM_BREATHE: {
-        const uint32_t dur = cfg->breathe_duration_ms > 0 ? cfg->breathe_duration_ms
-            : (uint32_t)ZRC_GET("argb/breathe_dft_dur", CONFIG_ZMK_ADAPTIVE_FEEDBACK_BREATHE_DEFAULT_MS);
+        const uint32_t dur = cfg->breathe_duration_ms;
         const int32_t tick_ms = ZRC_GET("argb/tick", CONFIG_ZMK_ADAPTIVE_FEEDBACK_TICK_MS);
         const uint16_t breathe_steps = (tick_ms > 0) ? (uint16_t)(dur / (uint32_t)tick_ms) : 60;
         const int step = (int)zaf_state.anim_step - (int)(breathe_steps / 2);
@@ -1063,7 +1062,6 @@ static int zaf_init(void) {
     zrc_register("argb/bc3",  CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_CRIT_THRESH_3, 0,   100);
     zrc_register("argb/tick", CONFIG_ZMK_ADAPTIVE_FEEDBACK_TICK_MS,            1,   100);
     zrc_register("argb/brt",  CONFIG_ZMK_ADAPTIVE_FEEDBACK_BRIGHTNESS,         0,   100);
-    zrc_register("argb/breathe_dft_dur", CONFIG_ZMK_ADAPTIVE_FEEDBACK_BREATHE_DEFAULT_MS,      100, 10000);
 #endif
 
     settings_load_subtree("argb");
@@ -1984,8 +1982,7 @@ static void zaf_apply_error_sections(void) {
         }
 
         case ZAF_ANIM_BREATHE: {
-            const uint32_t dur = cfg->breathe_duration_ms > 0 ? cfg->breathe_duration_ms
-                : (uint32_t)ZRC_GET("argb/breathe_dft_dur", CONFIG_ZMK_ADAPTIVE_FEEDBACK_BREATHE_DEFAULT_MS);
+            const uint32_t dur = cfg->breathe_duration_ms;
             const int32_t tick_ms = ZRC_GET("argb/tick", CONFIG_ZMK_ADAPTIVE_FEEDBACK_TICK_MS);
             const uint16_t breathe_steps = (tick_ms > 0) ? (uint16_t)(dur / (uint32_t)tick_ms) : 60;
             const int step = (int)zaf_state.anim_step - (int)(breathe_steps / 2);
