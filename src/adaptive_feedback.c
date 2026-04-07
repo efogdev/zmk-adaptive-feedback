@@ -657,7 +657,9 @@ static void zaf_tick(struct k_work *work) {
             }
         }
         if (all_zero) {
-            ext_power_disable(zaf_config.ext_power);
+            if (!zaf_state.feedback_active) {
+                ext_power_disable(zaf_config.ext_power);
+            }
             if (cfg->animation == ZAF_ANIM_SOLID) {
                 output_is_static_dark = true;
             }
@@ -681,7 +683,7 @@ static void zaf_tick(struct k_work *work) {
                 break;
             }
         }
-        if (!error_anim_needs_timer) {
+        if (!error_anim_needs_timer && !zaf_state.feedback_active) {
             k_timer_stop(&zaf_timer);
         }
     }
