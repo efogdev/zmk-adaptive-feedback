@@ -17,7 +17,7 @@ config ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT
 
 config ZMK_ADAPTIVE_FEEDBACK_MAX_ERROR_SLOTS
     int "Maximum number of error message slots"
-    default 8
+    default 4
     range 1 32
 
 config ZMK_ADAPTIVE_FEEDBACK_BATT_WARN_THRESH_1
@@ -61,13 +61,13 @@ config ZMK_ADAPTIVE_FEEDBACK_BRIGHTNESS
     range 0 100
 
 config ZMK_ADAPTIVE_FEEDBACK_BREATHE_DEFAULT_MS
-    int "Breathe animation step count"
-    default 1500
+    int "Default breathe animation cycle duration in milliseconds"
+    default 3000
     range 100 10000
 
 config ZMK_ADAPTIVE_FEEDBACK_FEEDBACK_PATTERN_MAX_LEN
     int "Maximum number of steps in a feedback pattern"
-    default 8
+    default 4
     range 1 32
 
 endif

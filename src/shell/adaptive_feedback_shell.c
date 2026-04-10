@@ -15,7 +15,9 @@ LOG_MODULE_DECLARE(zmk_adaptive_feedback, CONFIG_ZMK_LOG_LEVEL);
             shell_print((_sh), _fmt, ##__VA_ARGS__); \
     } while (0)
 
-static const char * const zaf_anim_names[] = {"solid", "blink", "breathe", "flash"};
+#define _ZAF_ANIM_STR(tok, str, val) str,
+static const char * const zaf_anim_names[] = { ZAF_ANIM_TABLE(_ZAF_ANIM_STR) };
+#undef _ZAF_ANIM_STR
 
 static int parse_anim(const char *s, uint8_t *out) {
     for (uint8_t i = 0; i < ARRAY_SIZE(zaf_anim_names); i++) {
@@ -27,14 +29,13 @@ static int parse_anim(const char *s, uint8_t *out) {
     return -EINVAL;
 }
 
-static const char * const zaf_ease_fn_names[] = {
-    "linear",
-    "quad-in", "quad-out", "quad-in-out",
-    "cubic-in", "cubic-out", "cubic-in-out",
-    "quart-in", "quart-out", "quart-in-out",
-    "expo-in", "expo-out",
-    "bounce-out", "bounce-in",
-};
+#define _ZAF_EASE_STR(tok, str, val) str,
+static const char * const zaf_ease_fn_names[] = { ZAF_EASE_TABLE(_ZAF_EASE_STR) };
+#undef _ZAF_EASE_STR
+
+#define _ZAF_EVT_STR(tok, str, val) str,
+static const char * const zaf_evt_names[] = { ZAF_EVT_TABLE(_ZAF_EVT_STR) };
+#undef _ZAF_EVT_STR
 
 static int parse_ease_fn(const char *s, uint8_t *out) {
     for (uint8_t i = 0; i < ARRAY_SIZE(zaf_ease_fn_names); i++) {
@@ -61,7 +62,7 @@ static int parse_event_spec(const struct shell *sh,
     *consumed   = 1;
     *custom_out = NULL;
 
-    if (strcmp(type, "layer") == 0) {
+    if (strcmp(type, zaf_evt_names[ZAF_EVTIDX_LAYER]) == 0) {
         if (argc < 2) {
             shprint(sh, "layer requires an index");
 
@@ -70,7 +71,7 @@ static int parse_event_spec(const struct shell *sh,
         *event_idx = ZAF_EVTIDX_LAYER;
         *sub_idx   = (uint8_t)strtol(argv[1], NULL, 10);
         *consumed  = 2;
-    } else if (strcmp(type, "batt-warn") == 0) {
+    } else if (strcmp(type, zaf_evt_names[ZAF_EVTIDX_BATT_WARN]) == 0) {
         if (argc < 2) {
             shprint(sh, "batt-warn requires level 1-3");
             return -EINVAL;
@@ -83,7 +84,7 @@ static int parse_event_spec(const struct shell *sh,
         *event_idx = ZAF_EVTIDX_BATT_WARN;
         *sub_idx   = (uint8_t)(lvl - 1);
         *consumed  = 2;
-    } else if (strcmp(type, "batt-crit") == 0) {
+    } else if (strcmp(type, zaf_evt_names[ZAF_EVTIDX_BATT_CRIT]) == 0) {
         if (argc < 2) {
             shprint(sh, "batt-crit requires level 1-3");
             return -EINVAL;
@@ -96,21 +97,20 @@ static int parse_event_spec(const struct shell *sh,
         *event_idx = ZAF_EVTIDX_BATT_CRIT;
         *sub_idx   = (uint8_t)(lvl - 1);
         *consumed  = 2;
-    } else if (strcmp(type, "idle") == 0) {
-        *event_idx = ZAF_EVTIDX_IDLE;
-    } else if (strcmp(type, "usb-conn") == 0) {
-        *event_idx = ZAF_EVTIDX_USB_CONN;
-    } else if (strcmp(type, "usb-disconn") == 0) {
-        *event_idx = ZAF_EVTIDX_USB_DISCONN;
-    } else if (strcmp(type, "ble-profile") == 0) {
+    } else if (strcmp(type, zaf_evt_names[ZAF_EVTIDX_BLE_PROFILE]) == 0) {
+        if (argc < 2) {
+            shprint(sh, "ble-profile requires a profile index 1-%d", CONFIG_BT_MAX_PAIRED);
+            return -EINVAL;
+        }
+        const int prof = (int)strtol(argv[1], NULL, 10);
+        if (prof < 1 || prof > CONFIG_BT_MAX_PAIRED) {
+            shprint(sh, "ble-profile index must be 1-%d", CONFIG_BT_MAX_PAIRED);
+            return -EINVAL;
+        }
         *event_idx = ZAF_EVTIDX_BLE_PROFILE;
-    } else if (strcmp(type, "no-endpoint") == 0) {
-        *event_idx = ZAF_EVTIDX_NO_ENDPOINT;
-    } else if (strcmp(type, "studio-unlock") == 0) {
-        *event_idx = ZAF_EVTIDX_STUDIO_UNLOCK;
-    } else if (strcmp(type, "studio-lock") == 0) {
-        *event_idx = ZAF_EVTIDX_STUDIO_LOCK;
-    } else if (strcmp(type, "error") == 0) {
+        *sub_idx   = (uint8_t)(prof - 1);
+        *consumed  = 2;
+    } else if (strcmp(type, zaf_evt_names[ZAF_EVTIDX_ERROR]) == 0) {
         if (argc < 2) {
             shprint(sh, "error requires a slot index");
             return -EINVAL;
@@ -119,32 +119,48 @@ static int parse_event_spec(const struct shell *sh,
         *sub_idx   = (uint8_t)strtol(argv[1], NULL, 10);
         *consumed  = 2;
     } else {
-        STRUCT_SECTION_FOREACH(zaf_custom_event, cevt) {
-            if (strcmp(type, cevt->name) == 0) {
-                *custom_out = cevt;
-                return 0;
+        static const struct { const char *name; uint8_t idx; } simple_evts[] = {
+#define _ZAF_SIMPLE_ROW(tok, str, val) { str, ZAF_EVTIDX_##tok },
+            ZAF_SIMPLE_EVT_TABLE(_ZAF_SIMPLE_ROW)
+#undef _ZAF_SIMPLE_ROW
+        };
+        bool found = false;
+        for (size_t i = 0; i < ARRAY_SIZE(simple_evts); i++) {
+            if (strcmp(type, simple_evts[i].name) == 0) {
+                *event_idx = simple_evts[i].idx;
+                found = true;
+                break;
             }
         }
-        shprint(sh, "unknown event type '%s'", type);
-        return -EINVAL;
+        if (!found) {
+            STRUCT_SECTION_FOREACH(zaf_custom_event, cevt) {
+                if (strcmp(type, cevt->name) == 0) {
+                    *custom_out = cevt;
+                    return 0;
+                }
+            }
+            shprint(sh, "unknown event type '%s'", type);
+            return -EINVAL;
+        }
     }
 
     return 0;
 }
 
-static void print_event_info(const struct shell *sh, const struct zaf_event_info *info) {
-    if (info->label != NULL) {
-        shprint(sh, "  label:      %s", info->label);
+static void print_event_info(const struct shell *sh, const struct zaf_event_info *info,
+                             const char *label, const bool persistent) {
+    if (label != NULL) {
+        shprint(sh, "  label:      %s", label);
     }
     shprint(sh, "  anim:       %s",
-            info->anim < ARRAY_SIZE(zaf_anim_names) ? zaf_anim_names[info->anim] : "?");
+            info->animation < ARRAY_SIZE(zaf_anim_names) ? zaf_anim_names[info->animation] : "?");
     shprint(sh, "  colors:     %d", info->color_count);
     for (uint8_t i = 0; i < info->color_count; i++) {
         shprint(sh, "    [%d] r=%-3d g=%-3d b=%-3d",
                 i, info->colors[i].r, info->colors[i].g, info->colors[i].b);
     }
     shprint(sh, "  blink:      on=%dms off=%dms", info->blink_on_ms, info->blink_off_ms);
-    shprint(sh, "  flash-dur:  %dms", info->flash_dur_ms);
+    shprint(sh, "  flash-dur:  %dms", info->flash_duration_ms);
     shprint(sh, "  flash-ease-in:  %dms fn=%s", info->flash_ease_in_ms,
             info->flash_ease_in_fn < ARRAY_SIZE(zaf_ease_fn_names)
                 ? zaf_ease_fn_names[info->flash_ease_in_fn] : "?");
@@ -152,7 +168,7 @@ static void print_event_info(const struct shell *sh, const struct zaf_event_info
             info->flash_ease_out_fn < ARRAY_SIZE(zaf_ease_fn_names)
                 ? zaf_ease_fn_names[info->flash_ease_out_fn] : "?");
     if (info->feedback_pattern_len > 0) {
-        char buf[ZAF_FEEDBACK_PATTERN_MAX_LEN * 8];
+        char buf[CONFIG_ZMK_ADAPTIVE_FEEDBACK_FEEDBACK_PATTERN_MAX_LEN * 8];
         int off = 0;
         for (uint8_t i = 0; i < info->feedback_pattern_len && off < (int)sizeof(buf) - 8; i++) {
             off += snprintf(buf + off, sizeof(buf) - off, "%u", info->feedback_pattern[i]);
@@ -165,8 +181,8 @@ static void print_event_info(const struct shell *sh, const struct zaf_event_info
     } else {
         shprint(sh, "  feedback:   (none)");
     }
-    shprint(sh, "  breathe:    %dms", info->breathe_dur_ms);
-    shprint(sh, "  persistent: %s", info->persistent ? "yes" : "no");
+    shprint(sh, "  breathe:    %dms", info->breathe_duration_ms);
+    shprint(sh, "  persistent: %s", persistent ? "yes" : "no");
 }
 
 static int cmd_evt_parse_color(const struct shell *sh, const int nvals, char **vals,
@@ -174,14 +190,14 @@ static int cmd_evt_parse_color(const struct shell *sh, const int nvals, char **v
                                 bool *has_idx) {
     if (nvals < 3) {
         shprint(sh, "usage: color [<idx 0-%d>] <r 0-255> <g 0-255> <b 0-255>",
-                ZAF_INFO_MAX_COLORS - 1);
+                CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_COLORS - 1);
         return -EINVAL;
     }
     int r, g, b;
     if (nvals >= 4) {
         const int idx = (int)strtol(vals[0], NULL, 10);
-        if (idx < 0 || idx >= ZAF_INFO_MAX_COLORS) {
-            shprint(sh, "error: idx must be 0-%d", ZAF_INFO_MAX_COLORS - 1);
+        if (idx < 0 || idx >= CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_COLORS) {
+            shprint(sh, "error: idx must be 0-%d", CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_COLORS - 1);
             return -EINVAL;
         }
         r = (int)strtol(vals[1], NULL, 10);
@@ -238,170 +254,99 @@ static int cmd_evt(const struct shell *sh, const size_t argc, char **argv) {
     char    **vals    = &argv[val_off];
 
     int rc = 0;
-    if (custom != NULL) {
-        if (strcmp(prop, "show") == 0) {
-            struct zaf_event_info info;
+
+    /* ---- "show" is handled separately as it reads, not writes ---- */
+    if (strcmp(prop, "show") == 0) {
+        struct zaf_event_info info;
+        if (custom != NULL) {
             rc = zaf_custom_event_get(custom, &info);
             if (rc == 0) {
-                print_event_info(sh, &info);
+                print_event_info(sh, &info, zaf_custom_event_get_label(custom),
+                                 zaf_custom_event_is_persistent(custom));
             }
-        } else if (strcmp(prop, "color") == 0) {
-            uint8_t idx = 0;
-            struct zaf_rgb color;
-            bool has_idx;
-            rc = cmd_evt_parse_color(sh, nvals, vals, &idx, &color, &has_idx);
-            if (rc == 0) {
-                rc = has_idx
-                    ? zaf_custom_event_set_color_at(custom, idx, color)
-                    : zaf_custom_event_set_color(custom, color);
-            }
-        } else if (strcmp(prop, "anim") == 0) {
-            if (nvals < 1) { shprint(sh, "usage: anim <solid|blink|breathe|flash>"); return -EINVAL; }
-            uint8_t anim;
-            if (parse_anim(vals[0], &anim) != 0) {
-                shprint(sh, "unknown animation '%s'", vals[0]);
-                return -EINVAL;
-            }
-            rc = zaf_custom_event_set_anim(custom, anim);
-        } else if (strcmp(prop, "blink") == 0) {
-            if (nvals < 2) { shprint(sh, "usage: blink <on_ms> <off_ms>"); return -EINVAL; }
-            rc = zaf_custom_event_set_blink(custom,
-                    (uint16_t)strtol(vals[0], NULL, 10),
-                    (uint16_t)strtol(vals[1], NULL, 10));
-        } else if (strcmp(prop, "flash") == 0) {
-            if (nvals < 1) { shprint(sh, "usage: flash <dur_ms>"); return -EINVAL; }
-            rc = zaf_custom_event_set_flash(custom, (uint16_t)strtol(vals[0], NULL, 10));
-        } else if (strcmp(prop, "flash-ease-in") == 0) {
-            if (nvals < 2) { shprint(sh, "usage: flash-ease-in <ms> <fn>"); return -EINVAL; }
-            uint8_t fn;
-            if (parse_ease_fn(vals[1], &fn) != 0) {
-                shprint(sh, "unknown easing '%s'", vals[1]);
-                return -EINVAL;
-            }
-            rc = zaf_custom_event_set_flash_ease_in(custom,
-                    (uint16_t)strtol(vals[0], NULL, 10), fn);
-        } else if (strcmp(prop, "flash-ease-out") == 0) {
-            if (nvals < 2) { shprint(sh, "usage: flash-ease-out <ms> <fn>"); return -EINVAL; }
-            uint8_t fn;
-            if (parse_ease_fn(vals[1], &fn) != 0) {
-                shprint(sh, "unknown easing '%s'", vals[1]);
-                return -EINVAL;
-            }
-            rc = zaf_custom_event_set_flash_ease_out(custom,
-                    (uint16_t)strtol(vals[0], NULL, 10), fn);
-        } else if (strcmp(prop, "feedback") == 0) {
-            if (nvals < 1) { shprint(sh, "usage: feedback <on_ms> [off_ms on_ms ...]"); return -EINVAL; }
-            uint16_t pat[ZAF_FEEDBACK_PATTERN_MAX_LEN];
-            const uint8_t plen = (uint8_t)MIN(nvals, ZAF_FEEDBACK_PATTERN_MAX_LEN);
-            for (uint8_t i = 0; i < plen; i++) {
-                pat[i] = (uint16_t)strtol(vals[i], NULL, 10);
-            }
-            rc = zaf_custom_event_set_feedback(custom, pat, plen);
-        } else if (strcmp(prop, "breathe") == 0) {
-            if (nvals < 1) { shprint(sh, "usage: breathe <dur_ms>"); return -EINVAL; }
-            rc = zaf_custom_event_set_breathe(custom, (uint16_t)strtol(vals[0], NULL, 10));
         } else {
-            shprint(sh, "unknown property '%s'", prop);
-            return -EINVAL;
+            rc = zaf_event_get(event_idx, sub_idx, &info);
+            if (rc == 0) {
+                print_event_info(sh, &info, zaf_event_get_label(event_idx, sub_idx),
+                                 zaf_event_is_persistent(event_idx, sub_idx));
+            }
         }
         if (rc) { shprint(sh, "error: %d", rc); }
         return rc;
     }
 
-    /* ---- Built-in event path ---- */
-    if (strcmp(prop, "show") == 0) {
-        struct zaf_event_info info;
-        rc = zaf_event_get(event_idx, sub_idx, &info);
-        if (rc) {
-            shprint(sh, "error: %d", rc);
-            return rc;
-        }
-        print_event_info(sh, &info);
-        return 0;
-    }
+    /* ---- Field setters shared by custom and built-in paths ---- */
+    enum zaf_field field;
+    union zaf_field_value val = {0};
 
     if (strcmp(prop, "color") == 0) {
         uint8_t idx = 0;
         struct zaf_rgb color;
         bool has_idx;
         rc = cmd_evt_parse_color(sh, nvals, vals, &idx, &color, &has_idx);
-        if (rc == 0) {
-            rc = has_idx
-                ? zaf_event_set_color_at(event_idx, sub_idx, idx, color)
-                : zaf_event_set_color(event_idx, sub_idx, color);
+        if (rc != 0) { return rc; }
+        if (has_idx) {
+            field              = ZAF_FIELD_COLOR_AT;
+            val.color_at.idx   = idx;
+            val.color_at.color = color;
+        } else {
+            field     = ZAF_FIELD_COLOR;
+            val.color = color;
         }
     } else if (strcmp(prop, "anim") == 0) {
-        if (nvals < 1) {
-            shprint(sh, "usage: anim <solid|blink|breathe|flash>");
-            return -EINVAL;
-        }
-        uint8_t anim;
-        if (parse_anim(vals[0], &anim) != 0) {
+        if (nvals < 1) { shprint(sh, "usage: anim <solid|blink|breathe|flash>"); return -EINVAL; }
+        if (parse_anim(vals[0], &val.anim) != 0) {
             shprint(sh, "unknown animation '%s'", vals[0]);
             return -EINVAL;
         }
-        rc = zaf_event_set_anim(event_idx, sub_idx, anim);
+        field = ZAF_FIELD_ANIM;
     } else if (strcmp(prop, "blink") == 0) {
-        if (nvals < 2) {
-            shprint(sh, "usage: blink <on_ms> <off_ms>");
-            return -EINVAL;
-        }
-        rc = zaf_event_set_blink(event_idx, sub_idx,
-                                 (uint16_t)strtol(vals[0], NULL, 10),
-                                 (uint16_t)strtol(vals[1], NULL, 10));
+        if (nvals < 2) { shprint(sh, "usage: blink <on_ms> <off_ms>"); return -EINVAL; }
+        val.blink.on_ms  = (uint16_t)strtol(vals[0], NULL, 10);
+        val.blink.off_ms = (uint16_t)strtol(vals[1], NULL, 10);
+        field = ZAF_FIELD_BLINK;
     } else if (strcmp(prop, "flash") == 0) {
-        if (nvals < 1) {
-            shprint(sh, "usage: flash <dur_ms>");
-            return -EINVAL;
-        }
-        rc = zaf_event_set_flash(event_idx, sub_idx,
-                                 (uint16_t)strtol(vals[0], NULL, 10));
+        if (nvals < 1) { shprint(sh, "usage: flash <dur_ms>"); return -EINVAL; }
+        val.flash_dur_ms = (uint16_t)strtol(vals[0], NULL, 10);
+        field = ZAF_FIELD_FLASH;
     } else if (strcmp(prop, "flash-ease-in") == 0) {
-        if (nvals < 2) {
-            shprint(sh, "usage: flash-ease-in <ms> <fn>");
-            return -EINVAL;
-        }
-        uint8_t fn;
-        if (parse_ease_fn(vals[1], &fn) != 0) {
+        if (nvals < 2) { shprint(sh, "usage: flash-ease-in <ms> <fn>"); return -EINVAL; }
+        if (parse_ease_fn(vals[1], &val.ease.fn) != 0) {
             shprint(sh, "unknown easing '%s'", vals[1]);
             return -EINVAL;
         }
-        rc = zaf_event_set_flash_ease_in(event_idx, sub_idx,
-                                          (uint16_t)strtol(vals[0], NULL, 10), fn);
+        val.ease.ms = (uint16_t)strtol(vals[0], NULL, 10);
+        field = ZAF_FIELD_FLASH_EASE_IN;
     } else if (strcmp(prop, "flash-ease-out") == 0) {
-        if (nvals < 2) {
-            shprint(sh, "usage: flash-ease-out <ms> <fn>");
-            return -EINVAL;
-        }
-        uint8_t fn;
-        if (parse_ease_fn(vals[1], &fn) != 0) {
+        if (nvals < 2) { shprint(sh, "usage: flash-ease-out <ms> <fn>"); return -EINVAL; }
+        if (parse_ease_fn(vals[1], &val.ease.fn) != 0) {
             shprint(sh, "unknown easing '%s'", vals[1]);
             return -EINVAL;
         }
-        rc = zaf_event_set_flash_ease_out(event_idx, sub_idx,
-                                           (uint16_t)strtol(vals[0], NULL, 10), fn);
+        val.ease.ms = (uint16_t)strtol(vals[0], NULL, 10);
+        field = ZAF_FIELD_FLASH_EASE_OUT;
     } else if (strcmp(prop, "feedback") == 0) {
-        if (nvals < 1) {
-            shprint(sh, "usage: feedback <on_ms> [off_ms on_ms ...]");
-            return -EINVAL;
-        }
-        uint16_t pat[ZAF_FEEDBACK_PATTERN_MAX_LEN];
-        const uint8_t plen = (uint8_t)MIN(nvals, ZAF_FEEDBACK_PATTERN_MAX_LEN);
+        if (nvals < 1) { shprint(sh, "usage: feedback <on_ms> [off_ms on_ms ...]"); return -EINVAL; }
+        static uint16_t pat[CONFIG_ZMK_ADAPTIVE_FEEDBACK_FEEDBACK_PATTERN_MAX_LEN];
+        const uint8_t plen = (uint8_t)MIN(nvals, CONFIG_ZMK_ADAPTIVE_FEEDBACK_FEEDBACK_PATTERN_MAX_LEN);
         for (uint8_t i = 0; i < plen; i++) {
             pat[i] = (uint16_t)strtol(vals[i], NULL, 10);
         }
-        rc = zaf_event_set_feedback(event_idx, sub_idx, pat, plen);
+        val.feedback.pattern = pat;
+        val.feedback.len     = plen;
+        field = ZAF_FIELD_FEEDBACK;
     } else if (strcmp(prop, "breathe") == 0) {
-        if (nvals < 1) {
-            shprint(sh, "usage: breathe <dur_ms>");
-            return -EINVAL;
-        }
-        rc = zaf_event_set_breathe(event_idx, sub_idx,
-                                   (uint16_t)strtol(vals[0], NULL, 10));
+        if (nvals < 1) { shprint(sh, "usage: breathe <dur_ms>"); return -EINVAL; }
+        val.breathe_dur_ms = (uint16_t)strtol(vals[0], NULL, 10);
+        field = ZAF_FIELD_BREATHE;
     } else {
         shprint(sh, "unknown property '%s'", prop);
         return -EINVAL;
     }
+
+    rc = (custom != NULL)
+        ? zaf_custom_event_set(custom, field, val)
+        : zaf_event_set(event_idx, sub_idx, field, val);
 
     if (rc) {
         shprint(sh, "error: %d", rc);
@@ -433,19 +378,26 @@ static int cmd_clear(const struct shell *sh, size_t argc, char **argv) {
 
 static void print_named_event(const struct shell *sh, const char *name,
                               const uint8_t event_idx, const uint8_t sub_idx) {
+    if (zaf_event_is_headless(event_idx, sub_idx)) {
+        return;
+    }
     struct zaf_event_info info;
     if (zaf_event_get(event_idx, sub_idx, &info) != 0) {
         return;
     }
     shprint(sh, "[%s]", name);
-    print_event_info(sh, &info);
+    print_event_info(sh, &info, zaf_event_get_label(event_idx, sub_idx),
+                     zaf_event_is_persistent(event_idx, sub_idx));
 }
 
 static void print_custom_event(const struct shell *sh, const struct zaf_custom_event *evt) {
+    if (evt->headless) {
+        return;
+    }
     struct zaf_event_info info;
     zaf_custom_event_get(evt, &info);
     shprint(sh, "[%s]", evt->name);
-    print_event_info(sh, &info);
+    print_event_info(sh, &info, zaf_custom_event_get_label(evt), zaf_custom_event_is_persistent(evt));
 }
 
 static int cmd_status(const struct shell *sh, size_t argc, char **argv) {
@@ -453,33 +405,37 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv) {
 
     for (uint8_t i = 0; i < zaf_error_slots_count(); i++) {
         char name[16];
-        snprintf(name, sizeof(name), "error %d", i);
+        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_ERROR], i);
         print_named_event(sh, name, ZAF_EVTIDX_ERROR, i);
     }
 
-    print_named_event(sh, "idle",           ZAF_EVTIDX_IDLE,          0);
-    print_named_event(sh, "usb-conn",       ZAF_EVTIDX_USB_CONN,      0);
-    print_named_event(sh, "usb-disconn",    ZAF_EVTIDX_USB_DISCONN,   0);
-    print_named_event(sh, "ble-profile",    ZAF_EVTIDX_BLE_PROFILE,   0);
-    print_named_event(sh, "no-endpoint",    ZAF_EVTIDX_NO_ENDPOINT,   0);
-    print_named_event(sh, "studio-unlock",  ZAF_EVTIDX_STUDIO_UNLOCK, 0);
-    print_named_event(sh, "studio-lock",    ZAF_EVTIDX_STUDIO_LOCK,   0);
+    print_named_event(sh, zaf_evt_names[ZAF_EVTIDX_IDLE],          ZAF_EVTIDX_IDLE,          0);
+    print_named_event(sh, zaf_evt_names[ZAF_EVTIDX_USB_CONN],      ZAF_EVTIDX_USB_CONN,      0);
+    print_named_event(sh, zaf_evt_names[ZAF_EVTIDX_USB_DISCONN],   ZAF_EVTIDX_USB_DISCONN,   0);
+    for (uint8_t prof = 0; prof < CONFIG_BT_MAX_PAIRED; prof++) {
+        char name[24];
+        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_BLE_PROFILE], prof + 1);
+        print_named_event(sh, name, ZAF_EVTIDX_BLE_PROFILE, prof);
+    }
+    print_named_event(sh, zaf_evt_names[ZAF_EVTIDX_NO_ENDPOINT],   ZAF_EVTIDX_NO_ENDPOINT,   0);
+    print_named_event(sh, zaf_evt_names[ZAF_EVTIDX_STUDIO_UNLOCK], ZAF_EVTIDX_STUDIO_UNLOCK, 0);
+    print_named_event(sh, zaf_evt_names[ZAF_EVTIDX_STUDIO_LOCK],   ZAF_EVTIDX_STUDIO_LOCK,   0);
 
-    for (uint8_t lvl = 0; lvl < ZAF_BATT_LEVEL_COUNT; lvl++) {
+    for (uint8_t lvl = 0; lvl < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT; lvl++) {
         char name[16];
-        snprintf(name, sizeof(name), "batt-warn %d", lvl + 1);
+        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_BATT_WARN], lvl + 1);
         print_named_event(sh, name, ZAF_EVTIDX_BATT_WARN, lvl);
     }
-    for (uint8_t lvl = 0; lvl < ZAF_BATT_LEVEL_COUNT; lvl++) {
+    for (uint8_t lvl = 0; lvl < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT; lvl++) {
         char name[16];
-        snprintf(name, sizeof(name), "batt-crit %d", lvl + 1);
+        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_BATT_CRIT], lvl + 1);
         print_named_event(sh, name, ZAF_EVTIDX_BATT_CRIT, lvl);
     }
 
     const uint8_t layers = zaf_layer_count();
     for (uint8_t layer = 0; layer < layers; layer++) {
         char name[16];
-        snprintf(name, sizeof(name), "layer %d", layer);
+        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_LAYER], layer);
         print_named_event(sh, name, ZAF_EVTIDX_LAYER, layer);
     }
 
@@ -532,7 +488,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_argb,
     SHELL_CMD_ARG(evt, NULL,
         "Inspect or modify an event's LED config.\n"
         "Usage: argb evt <layer <n>|batt-warn <1-3>|batt-crit <1-3>|idle|usb-conn|usb-disconn|"
-        "ble-profile|no-endpoint|studio-unlock|studio-lock|error <n>|<custom-name>>"
+        "ble-profile <n>|no-endpoint|studio-unlock|studio-lock|error <n>|<custom-name>>"
         " <show|color [<idx>] <r> <g> <b>|anim <solid|blink|breathe|flash>"
         "|blink <on_ms> <off_ms>|flash <dur_ms>"
         "|flash-ease-in <ms> <fn>|flash-ease-out <ms> <fn>|feedback <dur_ms>>\n"
@@ -544,7 +500,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_argb,
         "      quart-in|quart-out|quart-in-out|expo-in|expo-out|bounce-out|bounce-in\n"
         "  feedback <dur_ms>         -- haptic/LED feedback pulse duration for this event\n"
         "  breathe <dur_ms>          -- breathe animation cycle duration in ms (0 for global default)",
-        cmd_evt, 3, 8),
+        cmd_evt, 3, 11),
     SHELL_CMD_ARG(error, NULL,
         "Error slot control.\n"
         "Usage: argb error <slot> <trigger|clear|clear-all>",

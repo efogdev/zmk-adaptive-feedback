@@ -54,15 +54,15 @@ child-binding:
       required: true
       enum:
         - "layer"
-        - "battery-warning"
-        - "battery-critical"
-        - "usb-connected"
-        - "usb-disconnected"
-        - "ble-profile-changed"
+        - "batt-warn"
+        - "batt-crit"
+        - "usb-conn"
+        - "usb-disconn"
+        - "ble-profile"
         - "idle"
         - "no-endpoint"
-        - "studio-unlocked"
-        - "studio-locked"
+        - "studio-unlock"
+        - "studio-lock"
         - "custom"
         - "error"
 
@@ -80,6 +80,12 @@ child-binding:
       type: int
       default: 1
 
+    ble-profile-index:
+      type: int
+      default: 0
+      description: >
+        BLE profile index (0-based). Only used when event-type is "ble-profile".
+
     error-slot-index:
       type: int
       default: 0
@@ -93,6 +99,11 @@ child-binding:
 
     persistent:
       type: boolean
+
+    headless:
+      type: boolean
+      description: >
+        When set, this event is excluded from shell status output.
 
     animation:
       type: string
@@ -170,7 +181,7 @@ child-binding:
       description: Easing curve applied during the flash fade-out phase.
 
     feedback-pattern:
-      type: uint8-array
+      type: array
       description: >
         Feedback pattern: alternating ON/OFF durations in milliseconds.
 

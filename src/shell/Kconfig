@@ -3,6 +3,6 @@ if SHELL
 config ZMK_ADAPTIVE_FEEDBACK_SHELL
     bool "Adaptive Feedback shell commands"
     depends on ZMK_ADAPTIVE_FEEDBACK
-    default y
+    default n
 
 endif
