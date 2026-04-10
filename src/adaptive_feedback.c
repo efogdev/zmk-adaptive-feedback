@@ -42,11 +42,6 @@ static inline uint16_t zaf_ticks_from_ms(const uint32_t ms) {
     return (tick > 0) ? (uint16_t)(ms / (uint32_t)tick) : 1;
 }
 
-struct zaf_layer_entry {
-    struct zaf_event_info cfg;
-    bool valid;
-};
-
 struct zaf_device_config {
     const struct device *led_strip;
     const struct device *ext_power;
@@ -58,17 +53,6 @@ struct zaf_device_config {
     uint16_t feedback_delay_ms;
     const struct gpio_dt_spec *feedback_gpio;
     const struct gpio_dt_spec *feedback_extra_gpio;
-    struct zaf_event_info evt_idle;
-    struct zaf_event_info evt_usb_conn;
-    struct zaf_event_info evt_usb_disconn;
-    struct zaf_event_info evt_ble_profile[CONFIG_BT_MAX_PAIRED];
-    struct zaf_event_info evt_batt_warn[CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT];
-    struct zaf_event_info evt_batt_crit[CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT];
-    struct zaf_event_info evt_no_endpoint;
-    struct zaf_event_info evt_studio_unlock;
-    struct zaf_event_info evt_studio_lock;
-    struct zaf_layer_entry dt_layers[ZMK_KEYMAP_LAYERS_LEN];
-    struct zaf_event_info dt_error_slots[CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_ERROR_SLOTS];
 };
 
 struct zaf_evt_override {
@@ -77,11 +61,7 @@ struct zaf_evt_override {
     bool cleared;
 };
 
-struct __attribute__((__packed__)) zaf_runtime_state {
-    bool on;
-    bool override_active;
-    bool feedback_active;
-    struct zaf_event_info override_cfg;
+struct zaf_evt_state {
     struct zaf_evt_override rt_layers[ZMK_KEYMAP_LAYERS_LEN];
     struct zaf_evt_override rt_idle;
     struct zaf_evt_override rt_usb_conn;
@@ -93,6 +73,14 @@ struct __attribute__((__packed__)) zaf_runtime_state {
     struct zaf_evt_override rt_studio_unlock;
     struct zaf_evt_override rt_studio_lock;
     struct zaf_evt_override rt_error_slots[CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_ERROR_SLOTS];
+};
+
+struct __attribute__((__packed__)) zaf_runtime_state {
+    bool on;
+    bool override_active;
+    bool feedback_active;
+    struct zaf_event_info override_cfg;
+    struct zaf_evt_state evts;
     uint8_t active_layer;
     uint8_t batt_level;
     uint8_t prev_batt_level;
@@ -125,19 +113,6 @@ struct zaf_persisted {
     struct zaf_event_info override_cfg;
 };
 
-struct zaf_evt_persisted {
-    struct zaf_evt_override idle;
-    struct zaf_evt_override usb_conn;
-    struct zaf_evt_override usb_disconn;
-    struct zaf_evt_override ble_profile[CONFIG_BT_MAX_PAIRED];
-    struct zaf_evt_override no_endpoint;
-    struct zaf_evt_override batt_warn[CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT];
-    struct zaf_evt_override batt_crit[CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT];
-    struct zaf_evt_override layers[ZMK_KEYMAP_LAYERS_LEN];
-    struct zaf_evt_override studio_unlock;
-    struct zaf_evt_override studio_lock;
-    struct zaf_evt_override error_slots[CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_ERROR_SLOTS];
-};
 
 struct __attribute__((__packed__)) zaf_dt_child {
     uint8_t event_type_idx;
@@ -777,29 +752,7 @@ static void zaf_save_work_fn(struct k_work *work) {
 }
 
 static void zaf_save_evt_work_fn(struct k_work *work) {
-    static struct zaf_evt_persisted p;
-    p = (struct zaf_evt_persisted) {
-        .idle          = zaf_state.rt_idle,
-        .usb_conn      = zaf_state.rt_usb_conn,
-        .usb_disconn   = zaf_state.rt_usb_disconn,
-        .no_endpoint   = zaf_state.rt_no_endpoint,
-        .studio_unlock = zaf_state.rt_studio_unlock,
-        .studio_lock   = zaf_state.rt_studio_lock,
-    };
-    for (int i = 0; i < CONFIG_BT_MAX_PAIRED; i++) {
-        p.ble_profile[i] = zaf_state.rt_ble_profile[i];
-    }
-    for (int i = 0; i < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT; i++) {
-        p.batt_warn[i] = zaf_state.rt_batt_warn[i];
-        p.batt_crit[i] = zaf_state.rt_batt_crit[i];
-    }
-    for (int i = 0; i < ZMK_KEYMAP_LAYERS_LEN; i++) {
-        p.layers[i] = zaf_state.rt_layers[i];
-    }
-    for (uint8_t i = 0; i < zaf_config.error_slots && i < CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_ERROR_SLOTS; i++) {
-        p.error_slots[i] = zaf_state.rt_error_slots[i];
-    }
-    settings_save_one("argb/evtcfg", &p, sizeof(p));
+    settings_save_one("argb/evtcfg", &zaf_state.evts, sizeof(zaf_state.evts));
 }
 
 static void zaf_save_custom_work_fn(struct k_work *work) {
@@ -840,36 +793,16 @@ static int zaf_settings_set(const char *name, const size_t len, const settings_r
 
     static bool loaded_evtcfg = false;
     if (settings_name_steq(name, "evtcfg", &next) && !next && !loaded_evtcfg) {
-        if (len != sizeof(struct zaf_evt_persisted)) {
+        if (len != sizeof(struct zaf_evt_state)) {
             LOG_WRN("config size mismatch (%zu vs %zu), ignoring",
-                    len, sizeof(struct zaf_evt_persisted));
+                    len, sizeof(struct zaf_evt_state));
             return 0;
         }
-        static struct zaf_evt_persisted p;
-        const int rc = read_cb(cb_arg, &p, sizeof(p));
+        const int rc = read_cb(cb_arg, &zaf_state.evts, sizeof(zaf_state.evts));
         if (rc < 0) {
             return rc;
         }
         loaded_evtcfg = true;
-        zaf_state.rt_idle          = p.idle;
-        zaf_state.rt_usb_conn      = p.usb_conn;
-        zaf_state.rt_usb_disconn   = p.usb_disconn;
-        zaf_state.rt_no_endpoint   = p.no_endpoint;
-        zaf_state.rt_studio_unlock = p.studio_unlock;
-        zaf_state.rt_studio_lock   = p.studio_lock;
-        for (int i = 0; i < CONFIG_BT_MAX_PAIRED; i++) {
-            zaf_state.rt_ble_profile[i] = p.ble_profile[i];
-        }
-        for (int i = 0; i < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT; i++) {
-            zaf_state.rt_batt_warn[i] = p.batt_warn[i];
-            zaf_state.rt_batt_crit[i] = p.batt_crit[i];
-        }
-        for (int i = 0; i < ZMK_KEYMAP_LAYERS_LEN; i++) {
-            zaf_state.rt_layers[i] = p.layers[i];
-        }
-        for (uint8_t i = 0; i < zaf_config.error_slots && i < CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_ERROR_SLOTS; i++) {
-            zaf_state.rt_error_slots[i] = p.error_slots[i];
-        }
         return 0;
     }
 
@@ -908,106 +841,76 @@ static int zaf_save_evt_cfg(void) {
     return MIN(ret, 0);
 }
 
+static bool zaf_dt_child_matches(const struct zaf_dt_child *c,
+                                  const uint8_t event_idx, const uint8_t sub_idx) {
+    if (c->event_type_idx != event_idx) { return false; }
+    switch (event_idx) {
+    case ZAF_EVTIDX_LAYER:       return c->layer_index == sub_idx;
+    case ZAF_EVTIDX_BATT_WARN:   return (c->batt_level - 1) == sub_idx;
+    case ZAF_EVTIDX_BATT_CRIT:   return (c->batt_level - 1) == sub_idx;
+    case ZAF_EVTIDX_BLE_PROFILE: return c->ble_profile_index == sub_idx;
+    case ZAF_EVTIDX_ERROR:       return c->error_slot_index == sub_idx;
+    default:                     return true;
+    }
+}
+
+static const struct zaf_dt_child *zaf_dt_child_find(const uint8_t event_idx, const uint8_t sub_idx) {
+    for (uint8_t i = 0; i < ZAF_DT_CHILD_COUNT; i++) {
+        if (zaf_dt_child_matches(&zaf_dt_children[i], event_idx, sub_idx)) {
+            return &zaf_dt_children[i];
+        }
+    }
+    return NULL;
+}
+
+static const struct zaf_dt_child *zaf_dt_child_find_custom(const char *name) {
+    for (uint8_t i = 0; i < ZAF_DT_CHILD_COUNT; i++) {
+        const struct zaf_dt_child *c = &zaf_dt_children[i];
+        if (c->event_type_idx == ZAF_EVTIDX_CUSTOM &&
+            c->custom_name != NULL && strcmp(c->custom_name, name) == 0) {
+            return c;
+        }
+    }
+    return NULL;
+}
+
+static struct zaf_event_info zaf_dt_evt_buf;
+static struct zaf_event_info zaf_dt_err_buf;
+
+static void zaf_dt_child_to_event_info(const struct zaf_dt_child *c, struct zaf_event_info *out) {
+    out->color_count = MIN(c->color_count, CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_COLORS);
+    for (uint8_t i = 0; i < out->color_count; i++) {
+        out->colors[i].r = c->color_bytes[i * 3];
+        out->colors[i].g = c->color_bytes[i * 3 + 1];
+        out->colors[i].b = c->color_bytes[i * 3 + 2];
+    }
+    out->animation           = c->animation;
+    out->blink_on_ms         = c->blink_on_ms;
+    out->blink_off_ms        = c->blink_off_ms;
+    out->flash_duration_ms   = c->flash_duration_ms;
+    out->flash_ease_in_ms    = c->flash_ease_in_ms;
+    out->flash_ease_in_fn    = c->flash_ease_in_fn;
+    out->flash_ease_out_ms   = c->flash_ease_out_ms;
+    out->flash_ease_out_fn   = c->flash_ease_out_fn;
+    out->breathe_duration_ms = c->breathe_duration_ms;
+    out->feedback_pattern_len = MIN(c->feedback_pattern_len,
+                                    CONFIG_ZMK_ADAPTIVE_FEEDBACK_FEEDBACK_PATTERN_MAX_LEN);
+    for (uint8_t i = 0; i < out->feedback_pattern_len; i++) {
+        out->feedback_pattern[i] = c->feedback_pattern[i];
+    }
+}
+
 static void zaf_apply_dt_children(void) {
     for (uint8_t i = 0; i < ZAF_DT_CHILD_COUNT; i++) {
         const struct zaf_dt_child *c = &zaf_dt_children[i];
-        struct zaf_event_info cfg = {
-            .animation            = c->animation,
-            .feedback_pattern_len = c->feedback_pattern_len,
-            .color_count          = MIN(c->color_count, CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_COLORS),
-            .blink_on_ms          = c->blink_on_ms,
-            .blink_off_ms         = c->blink_off_ms,
-            .flash_duration_ms    = c->flash_duration_ms,
-            .flash_ease_in_fn     = c->flash_ease_in_fn,
-            .flash_ease_in_ms     = c->flash_ease_in_ms,
-            .flash_ease_out_fn    = c->flash_ease_out_fn,
-            .flash_ease_out_ms    = c->flash_ease_out_ms,
-            .breathe_duration_ms  = c->breathe_duration_ms,
-        };
-
-        for (uint8_t j = 0; j < c->color_count && j < CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_COLORS; j++) {
-            cfg.colors[j].r = c->color_bytes[j * 3];
-            cfg.colors[j].g = c->color_bytes[j * 3 + 1];
-            cfg.colors[j].b = c->color_bytes[j * 3 + 2];
+        if (c->event_type_idx != ZAF_EVTIDX_CUSTOM || c->custom_name == NULL) {
+            continue;
         }
-        for (uint8_t j = 0; j < c->feedback_pattern_len; j++) {
-            cfg.feedback_pattern[j] = c->feedback_pattern[j];
-        }
-        switch (c->event_type_idx) {
-        case ZAF_EVTIDX_LAYER:
-            if (c->layer_index < ZMK_KEYMAP_LAYERS_LEN) {
-                zaf_config.dt_layers[c->layer_index].cfg   = cfg;
-                zaf_config.dt_layers[c->layer_index].valid = true;
-            }
+        STRUCT_SECTION_FOREACH(zaf_custom_event, cevt) {
+            if (strcmp(c->custom_name, cevt->name) != 0) { continue; }
+            zaf_dt_child_to_event_info(c, &cevt->info);
+            cevt->headless = c->headless;
             break;
-        case ZAF_EVTIDX_BATT_WARN:
-            if (c->batt_level >= 1 && c->batt_level <= 3) {
-                zaf_config.evt_batt_warn[c->batt_level - 1] = cfg;
-            }
-            break;
-        case ZAF_EVTIDX_BATT_CRIT:
-            if (c->batt_level >= 1 && c->batt_level <= 3) {
-                zaf_config.evt_batt_crit[c->batt_level - 1] = cfg;
-            }
-            break;
-        case ZAF_EVTIDX_USB_CONN:
-            zaf_config.evt_usb_conn = cfg;
-            break;
-        case ZAF_EVTIDX_USB_DISCONN:
-            zaf_config.evt_usb_disconn = cfg;
-            break;
-        case ZAF_EVTIDX_BLE_PROFILE:
-            if (c->ble_profile_index < CONFIG_BT_MAX_PAIRED) {
-                zaf_config.evt_ble_profile[c->ble_profile_index] = cfg;
-            }
-            break;
-        case ZAF_EVTIDX_IDLE:
-            zaf_config.evt_idle = cfg;
-            break;
-        case ZAF_EVTIDX_NO_ENDPOINT:
-            zaf_config.evt_no_endpoint = cfg;
-            break;
-        case ZAF_EVTIDX_STUDIO_UNLOCK:
-            zaf_config.evt_studio_unlock = cfg;
-            break;
-        case ZAF_EVTIDX_STUDIO_LOCK:
-            zaf_config.evt_studio_lock = cfg;
-            break;
-        case ZAF_EVTIDX_CUSTOM:
-            if (c->custom_name != NULL) {
-                STRUCT_SECTION_FOREACH(zaf_custom_event, cevt) {
-                    if (strcmp(c->custom_name, cevt->name) == 0) {
-                        cevt->info.animation             = cfg.animation;
-                        cevt->info.color_count      = cfg.color_count;
-                        cevt->info.feedback_pattern_len = cfg.feedback_pattern_len;
-                        for (uint8_t j = 0; j < cfg.feedback_pattern_len; j++) {
-                            cevt->info.feedback_pattern[j] = cfg.feedback_pattern[j];
-                        }
-
-                        cevt->info.blink_on_ms  = cfg.blink_on_ms;
-                        cevt->info.blink_off_ms = cfg.blink_off_ms;
-                        cevt->info.flash_duration_ms      = cfg.flash_duration_ms;
-                        cevt->info.flash_ease_in_ms  = cfg.flash_ease_in_ms;
-                        cevt->info.flash_ease_in_fn  = cfg.flash_ease_in_fn;
-                        cevt->info.flash_ease_out_ms = cfg.flash_ease_out_ms;
-                        cevt->info.flash_ease_out_fn = cfg.flash_ease_out_fn;
-                        cevt->info.breathe_duration_ms = cfg.breathe_duration_ms;
-
-                        cevt->headless              = c->headless;
-                        for (uint8_t j = 0; j < cfg.color_count; j++) {
-                            cevt->info.colors[j] = cfg.colors[j];
-                        }
-                        break;
-                    }
-                }
-            }
-            break;
-        case ZAF_EVTIDX_ERROR:
-            if (c->error_slot_index < zaf_config.error_slots) {
-                zaf_config.dt_error_slots[c->error_slot_index] = cfg;
-            }
-            break;
-        default: break;
         }
     }
 }
@@ -1099,7 +1002,7 @@ static int zaf_init(void) {
 
     settings_load_subtree("argb");
     for (uint8_t i = 0; i < zaf_config.error_slots && i < CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_ERROR_SLOTS; i++) {
-        zaf_state.rt_error_slots[i].cleared = true;
+        zaf_state.evts.rt_error_slots[i].cleared = true;
     }
     if (zaf_state.on) {
         if (zaf_config.ext_power != NULL) {
@@ -1157,25 +1060,25 @@ uint8_t zaf_layer_count(void) {
 static struct zaf_evt_override *zaf_evt_rt_slot(const uint8_t event_idx, const uint8_t sub_idx) {
     switch (event_idx) {
     case ZAF_EVTIDX_LAYER:
-        if (sub_idx < ZMK_KEYMAP_LAYERS_LEN) return &zaf_state.rt_layers[sub_idx];
+        if (sub_idx < ZMK_KEYMAP_LAYERS_LEN) return &zaf_state.evts.rt_layers[sub_idx];
         return NULL;
     case ZAF_EVTIDX_BATT_WARN:
-        if (sub_idx < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT) return &zaf_state.rt_batt_warn[sub_idx];
+        if (sub_idx < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT) return &zaf_state.evts.rt_batt_warn[sub_idx];
         return NULL;
     case ZAF_EVTIDX_BATT_CRIT:
-        if (sub_idx < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT) return &zaf_state.rt_batt_crit[sub_idx];
+        if (sub_idx < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT) return &zaf_state.evts.rt_batt_crit[sub_idx];
         return NULL;
-    case ZAF_EVTIDX_USB_CONN:       return &zaf_state.rt_usb_conn;
-    case ZAF_EVTIDX_USB_DISCONN:    return &zaf_state.rt_usb_disconn;
+    case ZAF_EVTIDX_USB_CONN:       return &zaf_state.evts.rt_usb_conn;
+    case ZAF_EVTIDX_USB_DISCONN:    return &zaf_state.evts.rt_usb_disconn;
     case ZAF_EVTIDX_BLE_PROFILE:
-        if (sub_idx < CONFIG_BT_MAX_PAIRED) return &zaf_state.rt_ble_profile[sub_idx];
+        if (sub_idx < CONFIG_BT_MAX_PAIRED) return &zaf_state.evts.rt_ble_profile[sub_idx];
         return NULL;
-    case ZAF_EVTIDX_IDLE:           return &zaf_state.rt_idle;
-    case ZAF_EVTIDX_NO_ENDPOINT:    return &zaf_state.rt_no_endpoint;
-    case ZAF_EVTIDX_STUDIO_UNLOCK:  return &zaf_state.rt_studio_unlock;
-    case ZAF_EVTIDX_STUDIO_LOCK:    return &zaf_state.rt_studio_lock;
+    case ZAF_EVTIDX_IDLE:           return &zaf_state.evts.rt_idle;
+    case ZAF_EVTIDX_NO_ENDPOINT:    return &zaf_state.evts.rt_no_endpoint;
+    case ZAF_EVTIDX_STUDIO_UNLOCK:  return &zaf_state.evts.rt_studio_unlock;
+    case ZAF_EVTIDX_STUDIO_LOCK:    return &zaf_state.evts.rt_studio_lock;
     case ZAF_EVTIDX_ERROR:
-        if (sub_idx < zaf_config.error_slots) return &zaf_state.rt_error_slots[sub_idx];
+        if (sub_idx < zaf_config.error_slots) return &zaf_state.evts.rt_error_slots[sub_idx];
         return NULL;
     default:                         return NULL;
     }
@@ -1183,52 +1086,22 @@ static struct zaf_evt_override *zaf_evt_rt_slot(const uint8_t event_idx, const u
 
 /* Returns the effective config: runtime override if set, else DTS default (read path). */
 static const struct zaf_event_info *zaf_evt_eff_cfg(const uint8_t event_idx, const uint8_t sub_idx) {
-    switch (event_idx) {
-    case ZAF_EVTIDX_LAYER:
-        if (sub_idx < ZMK_KEYMAP_LAYERS_LEN) {
-            if (zaf_state.rt_layers[sub_idx].valid) return &zaf_state.rt_layers[sub_idx].cfg;
-            return zaf_config.dt_layers[sub_idx].valid ? &zaf_config.dt_layers[sub_idx].cfg : NULL;
-        }
-        return NULL;
-    case ZAF_EVTIDX_BATT_WARN:
-        if (sub_idx < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT) {
-            if (zaf_state.rt_batt_warn[sub_idx].valid) return &zaf_state.rt_batt_warn[sub_idx].cfg;
-            return &zaf_config.evt_batt_warn[sub_idx];
-        }
-        return NULL;
-    case ZAF_EVTIDX_BATT_CRIT:
-        if (sub_idx < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT) {
-            if (zaf_state.rt_batt_crit[sub_idx].valid) return &zaf_state.rt_batt_crit[sub_idx].cfg;
-            return &zaf_config.evt_batt_crit[sub_idx];
-        }
-        return NULL;
-    case ZAF_EVTIDX_USB_CONN:
-        return zaf_state.rt_usb_conn.valid ? &zaf_state.rt_usb_conn.cfg : &zaf_config.evt_usb_conn;
-    case ZAF_EVTIDX_USB_DISCONN:
-        return zaf_state.rt_usb_disconn.valid ? &zaf_state.rt_usb_disconn.cfg : &zaf_config.evt_usb_disconn;
-    case ZAF_EVTIDX_BLE_PROFILE:
-        if (sub_idx < CONFIG_BT_MAX_PAIRED) {
-            if (zaf_state.rt_ble_profile[sub_idx].valid) return &zaf_state.rt_ble_profile[sub_idx].cfg;
-            return &zaf_config.evt_ble_profile[sub_idx];
-        }
-        return NULL;
-    case ZAF_EVTIDX_IDLE:
-        return zaf_state.rt_idle.valid ? &zaf_state.rt_idle.cfg : &zaf_config.evt_idle;
-    case ZAF_EVTIDX_NO_ENDPOINT:
-        return zaf_state.rt_no_endpoint.valid ? &zaf_state.rt_no_endpoint.cfg : &zaf_config.evt_no_endpoint;
-    case ZAF_EVTIDX_STUDIO_UNLOCK:
-        return zaf_state.rt_studio_unlock.valid ? &zaf_state.rt_studio_unlock.cfg : &zaf_config.evt_studio_unlock;
-    case ZAF_EVTIDX_STUDIO_LOCK:
-        return zaf_state.rt_studio_lock.valid ? &zaf_state.rt_studio_lock.cfg : &zaf_config.evt_studio_lock;
-    case ZAF_EVTIDX_ERROR:
-        if (sub_idx < zaf_config.error_slots) {
-            if (zaf_state.rt_error_slots[sub_idx].valid) return &zaf_state.rt_error_slots[sub_idx].cfg;
-            return &zaf_config.dt_error_slots[sub_idx];
-        }
-        return NULL;
-    default:
-        return NULL;
+    if (event_idx == ZAF_EVTIDX_ERROR) {
+        /* Error path: check valid (not cleared) first, then DT fallback without cleared check
+         * so copy-on-write in zaf_evt_set_impl() can still seed from the DT default. */
+        if (sub_idx >= zaf_config.error_slots) return NULL;
+        if (zaf_state.evts.rt_error_slots[sub_idx].valid) return &zaf_state.evts.rt_error_slots[sub_idx].cfg;
+        const struct zaf_dt_child *ec = zaf_dt_child_find(ZAF_EVTIDX_ERROR, sub_idx);
+        if (!ec) return NULL;
+        zaf_dt_child_to_event_info(ec, &zaf_dt_err_buf);
+        return &zaf_dt_err_buf;
     }
+    const struct zaf_evt_override *rt = zaf_evt_rt_slot(event_idx, sub_idx);
+    if (rt && rt->valid) return &rt->cfg;
+    const struct zaf_dt_child *c = zaf_dt_child_find(event_idx, sub_idx);
+    if (!c) return NULL;
+    zaf_dt_child_to_event_info(c, &zaf_dt_evt_buf);
+    return &zaf_dt_evt_buf;
 }
 
 static void zaf_copy_event_info_to_out(struct zaf_event_info *out, const struct zaf_event_info *cfg) {
@@ -1242,65 +1115,31 @@ static void zaf_copy_event_info_to_out(struct zaf_event_info *out, const struct 
     zaf_copy_feedback_pattern(out, cfg);
 }
 
-static bool zaf_dt_child_matches(const struct zaf_dt_child *c,
-                                  const uint8_t event_idx, const uint8_t sub_idx) {
-    if (c->event_type_idx != event_idx) { return false; }
-    switch (event_idx) {
-    case ZAF_EVTIDX_LAYER:       return c->layer_index == sub_idx;
-    case ZAF_EVTIDX_BATT_WARN:   return (c->batt_level - 1) == sub_idx;
-    case ZAF_EVTIDX_BATT_CRIT:   return (c->batt_level - 1) == sub_idx;
-    case ZAF_EVTIDX_BLE_PROFILE: return c->ble_profile_index == sub_idx;
-    case ZAF_EVTIDX_ERROR:       return c->error_slot_index == sub_idx;
-    default:                     return true;
-    }
-}
-
 bool zaf_event_is_headless(const uint8_t event_idx, const uint8_t sub_idx) {
-    for (uint8_t i = 0; i < ZAF_DT_CHILD_COUNT; i++) {
-        const struct zaf_dt_child *c = &zaf_dt_children[i];
-        if (zaf_dt_child_matches(c, event_idx, sub_idx)) { return c->headless; }
-    }
-    return false;
+    const struct zaf_dt_child *c = zaf_dt_child_find(event_idx, sub_idx);
+    return c ? c->headless : false;
 }
 
 bool zaf_event_is_persistent(const uint8_t event_idx, const uint8_t sub_idx) {
-    for (uint8_t i = 0; i < ZAF_DT_CHILD_COUNT; i++) {
-        const struct zaf_dt_child *c = &zaf_dt_children[i];
-        if (zaf_dt_child_matches(c, event_idx, sub_idx)) { return c->persistent; }
-    }
-    return false;
+    const struct zaf_dt_child *c = zaf_dt_child_find(event_idx, sub_idx);
+    return c ? c->persistent : false;
 }
 
 const char *zaf_event_get_label(const uint8_t event_idx, const uint8_t sub_idx) {
-    for (uint8_t i = 0; i < ZAF_DT_CHILD_COUNT; i++) {
-        const struct zaf_dt_child *c = &zaf_dt_children[i];
-        if (zaf_dt_child_matches(c, event_idx, sub_idx)) { return c->label; }
-    }
-    return NULL;
+    const struct zaf_dt_child *c = zaf_dt_child_find(event_idx, sub_idx);
+    return c ? c->label : NULL;
 }
 
 const char *zaf_custom_event_get_label(const struct zaf_custom_event *evt) {
     if (!evt) { return NULL; }
-    for (uint8_t i = 0; i < ZAF_DT_CHILD_COUNT; i++) {
-        const struct zaf_dt_child *c = &zaf_dt_children[i];
-        if (c->event_type_idx == ZAF_EVTIDX_CUSTOM &&
-            c->custom_name != NULL && strcmp(c->custom_name, evt->name) == 0) {
-            return c->label;
-        }
-    }
-    return NULL;
+    const struct zaf_dt_child *c = zaf_dt_child_find_custom(evt->name);
+    return c ? c->label : NULL;
 }
 
 bool zaf_custom_event_is_persistent(const struct zaf_custom_event *evt) {
     if (!evt) { return false; }
-    for (uint8_t i = 0; i < ZAF_DT_CHILD_COUNT; i++) {
-        const struct zaf_dt_child *c = &zaf_dt_children[i];
-        if (c->event_type_idx == ZAF_EVTIDX_CUSTOM &&
-            c->custom_name != NULL && strcmp(c->custom_name, evt->name) == 0) {
-            return c->persistent;
-        }
-    }
-    return false;
+    const struct zaf_dt_child *c = zaf_dt_child_find_custom(evt->name);
+    return c ? c->persistent : false;
 }
 
 int zaf_event_get(const uint8_t event_idx, const uint8_t sub_idx, struct zaf_event_info *out) {
@@ -1389,26 +1228,26 @@ int zaf_clear_persisted(void) {
     zaf_state.override_active = false;
     memset(&zaf_state.override_cfg, 0, sizeof(zaf_state.override_cfg));
 
-    zaf_state.rt_idle.valid          = false;
-    zaf_state.rt_usb_conn.valid      = false;
-    zaf_state.rt_usb_disconn.valid   = false;
+    zaf_state.evts.rt_idle.valid          = false;
+    zaf_state.evts.rt_usb_conn.valid      = false;
+    zaf_state.evts.rt_usb_disconn.valid   = false;
     for (int i = 0; i < CONFIG_BT_MAX_PAIRED; i++) {
-        zaf_state.rt_ble_profile[i].valid = false;
+        zaf_state.evts.rt_ble_profile[i].valid = false;
     }
-    zaf_state.rt_no_endpoint.valid   = false;
-    zaf_state.rt_studio_unlock.valid = false;
-    zaf_state.rt_studio_lock.valid   = false;
+    zaf_state.evts.rt_no_endpoint.valid   = false;
+    zaf_state.evts.rt_studio_unlock.valid = false;
+    zaf_state.evts.rt_studio_lock.valid   = false;
 
     for (int i = 0; i < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT; i++) {
-        zaf_state.rt_batt_warn[i].valid = false;
-        zaf_state.rt_batt_crit[i].valid = false;
+        zaf_state.evts.rt_batt_warn[i].valid = false;
+        zaf_state.evts.rt_batt_crit[i].valid = false;
     }
     for (int i = 0; i < ZMK_KEYMAP_LAYERS_LEN; i++) {
-        zaf_state.rt_layers[i].valid = false;
+        zaf_state.evts.rt_layers[i].valid = false;
     }
     for (uint8_t i = 0; i < zaf_config.error_slots && i < CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_ERROR_SLOTS; i++) {
-        zaf_state.rt_error_slots[i].valid = false;
-        zaf_state.rt_error_slots[i].cleared = true;
+        zaf_state.evts.rt_error_slots[i].valid = false;
+        zaf_state.evts.rt_error_slots[i].cleared = true;
     }
 
     char key[32];
@@ -1616,20 +1455,17 @@ static struct zaf_evt_override *zaf_error_rt_slot(const uint8_t slot_idx) {
     if (slot_idx >= zaf_config.error_slots) {
         return NULL;
     }
-    return &zaf_state.rt_error_slots[slot_idx];
+    return &zaf_state.evts.rt_error_slots[slot_idx];
 }
 
 static const struct zaf_event_info *zaf_error_eff_cfg(const uint8_t slot_idx) {
-    if (slot_idx >= zaf_config.error_slots) {
-        return NULL;
-    }
-    if (zaf_state.rt_error_slots[slot_idx].cleared) {
-        return NULL;
-    }
-    if (zaf_state.rt_error_slots[slot_idx].valid) {
-        return &zaf_state.rt_error_slots[slot_idx].cfg;
-    }
-    return &zaf_config.dt_error_slots[slot_idx];
+    if (slot_idx >= zaf_config.error_slots) return NULL;
+    if (zaf_state.evts.rt_error_slots[slot_idx].cleared) return NULL;
+    if (zaf_state.evts.rt_error_slots[slot_idx].valid) return &zaf_state.evts.rt_error_slots[slot_idx].cfg;
+    const struct zaf_dt_child *c = zaf_dt_child_find(ZAF_EVTIDX_ERROR, slot_idx);
+    if (!c) return NULL;
+    zaf_dt_child_to_event_info(c, &zaf_dt_err_buf);
+    return &zaf_dt_err_buf;
 }
 
 int zaf_error_get(const uint8_t slot_idx, struct zaf_event_info *out) {
@@ -1667,15 +1503,15 @@ int zaf_error_trigger(const uint8_t slot_idx) {
         return -EINVAL;
     }
 
-    zaf_state.rt_error_slots[slot_idx].cleared = false;
+    zaf_state.evts.rt_error_slots[slot_idx].cleared = false;
 
     const struct zaf_event_info *ecfg = zaf_error_eff_cfg(slot_idx);
     if (!ecfg || (ecfg->color_count == 0 && ecfg->feedback_pattern_len == 0)) {
         return -EINVAL;
     }
 
-    zaf_state.rt_error_slots[slot_idx].cfg = *ecfg;
-    zaf_state.rt_error_slots[slot_idx].valid = true;
+    zaf_state.evts.rt_error_slots[slot_idx].cfg = *ecfg;
+    zaf_state.evts.rt_error_slots[slot_idx].valid = true;
     zaf_trigger_feedback(ecfg->feedback_pattern, ecfg->feedback_pattern_len);
     zaf_kick_timer();
     return 0;
@@ -1686,14 +1522,14 @@ int zaf_error_clear(const uint8_t slot_idx) {
         return -EINVAL;
     }
 
-    zaf_state.rt_error_slots[slot_idx].cleared = true;
+    zaf_state.evts.rt_error_slots[slot_idx].cleared = true;
     zaf_kick_timer();
     return zaf_save_evt_cfg();
 }
 
 int zaf_error_clear_all(void) {
     for (uint8_t i = 0; i < zaf_config.error_slots; i++) {
-        zaf_state.rt_error_slots[i].cleared = true;
+        zaf_state.evts.rt_error_slots[i].cleared = true;
     }
     zaf_kick_timer();
     return zaf_save_evt_cfg();
