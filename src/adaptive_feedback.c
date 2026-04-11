@@ -91,8 +91,8 @@ struct __attribute__((__packed__)) zaf_runtime_state {
     bool ble_connected;
     bool no_endpoint;
     uint16_t ble_event_ticks[CONFIG_BT_MAX_PAIRED];
-    uint16_t studio_event_ticks;
     bool studio_unlocked;
+    uint16_t studio_event_ticks;
     bool idle;
     uint16_t anim_step;
     uint8_t color_idx;
@@ -569,7 +569,9 @@ static void zaf_trigger_feedback(const uint16_t *pattern, const uint8_t len) {
         return;
     }
     k_work_cancel_delayable(&zaf_feedback_step_work);
-    ext_power_enable(zaf_config.ext_power);
+    if (zaf_state.on && zaf_config.ext_power != NULL) {
+        ext_power_enable(zaf_config.ext_power);
+    }
     if (zaf_state.feedback_active && zaf_config.feedback_gpio != NULL) {
         gpio_pin_set_dt(zaf_config.feedback_gpio, 0);
     }
