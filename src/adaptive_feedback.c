@@ -113,61 +113,86 @@ struct zaf_persisted {
     struct zaf_event_info override_cfg;
 };
 
+union zaf_anim_params {
+    struct { uint16_t on_ms; uint16_t off_ms; } blink;
+    struct __attribute__((__packed__)) {
+        uint16_t duration_ms;
+        uint16_t ease_in_ms;
+        uint8_t  ease_in_fn;
+        uint16_t ease_out_ms;
+        uint8_t  ease_out_fn;
+    } flash;
+    uint16_t breathe_duration_ms;
+};
+
+#define ZAF_CHILD_FLAG_PERSISTENT BIT(0)
+#define ZAF_CHILD_FLAG_HEADLESS   BIT(1)
 
 struct __attribute__((__packed__)) zaf_dt_child {
     uint8_t event_type_idx;
-    uint8_t layer_index;
-    uint8_t batt_level;
-    uint8_t ble_profile_index;
-    uint8_t error_slot_index;
+    uint8_t sub_idx;
     uint8_t color_bytes[CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_COLORS * 3];
     uint8_t color_count;
     uint8_t animation;
-    uint16_t blink_on_ms;
-    uint16_t blink_off_ms;
-    uint16_t flash_duration_ms;
-    uint16_t flash_ease_in_ms;
-    uint8_t  flash_ease_in_fn;
-    uint16_t flash_ease_out_ms;
-    uint8_t  flash_ease_out_fn;
-    uint16_t breathe_duration_ms;
+    union zaf_anim_params anim;
     uint16_t feedback_pattern[CONFIG_ZMK_ADAPTIVE_FEEDBACK_FEEDBACK_PATTERN_MAX_LEN];
     uint8_t  feedback_pattern_len;
-    bool persistent;
-    bool headless;
+    uint8_t  flags;
     const char *custom_name;
     const char *label;
 };
 
+#define _ZAF_SUB_IDX_0(c)  DT_PROP_OR(c, layer_index, 0)
+#define _ZAF_SUB_IDX_1(c)  DT_PROP_OR(c, battery_level, 1)
+#define _ZAF_SUB_IDX_2(c)  DT_PROP_OR(c, battery_level, 1)
+#define _ZAF_SUB_IDX_3(c)  0
+#define _ZAF_SUB_IDX_4(c)  0
+#define _ZAF_SUB_IDX_5(c)  DT_PROP_OR(c, ble_profile_index, 0)
+#define _ZAF_SUB_IDX_6(c)  0
+#define _ZAF_SUB_IDX_7(c)  0
+#define _ZAF_SUB_IDX_8(c)  0
+#define _ZAF_SUB_IDX_9(c)  0
+#define _ZAF_SUB_IDX_10(c) 0
+#define _ZAF_SUB_IDX_11(c) DT_PROP_OR(c, error_slot_index, 0)
+#define _ZAF_SUB_IDX_EXPAND(idx, c) _ZAF_SUB_IDX_##idx(c)
+#define _ZAF_SUB_IDX_(idx, c) _ZAF_SUB_IDX_EXPAND(idx, c)
+#define _ZAF_SUB_IDX(c) _ZAF_SUB_IDX_(DT_ENUM_IDX(c, event_type), c)
+
+#define _ZAF_ANIM_INIT_0(c)
+#define _ZAF_ANIM_INIT_1(c) \
+    .anim.blink.on_ms  = DT_PROP_OR(c, blink_on_ms, 0),  \
+    .anim.blink.off_ms = DT_PROP_OR(c, blink_off_ms, 0),
+#define _ZAF_ANIM_INIT_2(c) \
+    .anim.breathe_duration_ms = DT_PROP_OR(c, breathe_duration_ms, 0),
+#define _ZAF_ANIM_INIT_3(c) \
+    .anim.flash.duration_ms = DT_PROP_OR(c, flash_duration_ms, 0),  \
+    .anim.flash.ease_in_ms  = DT_PROP_OR(c, flash_ease_in_ms, 0),   \
+    .anim.flash.ease_in_fn  = DT_ENUM_IDX_OR(c, flash_ease_in_fn, 0), \
+    .anim.flash.ease_out_ms = DT_PROP_OR(c, flash_ease_out_ms, 0),  \
+    .anim.flash.ease_out_fn = DT_ENUM_IDX_OR(c, flash_ease_out_fn, 0),
+#define _ZAF_CHILD_ANIM_INIT_EXPAND(idx, c) _ZAF_ANIM_INIT_##idx(c)
+#define _ZAF_CHILD_ANIM_INIT_(idx, c) _ZAF_CHILD_ANIM_INIT_EXPAND(idx, c)
+#define _ZAF_CHILD_ANIM_INIT(c) _ZAF_CHILD_ANIM_INIT_(DT_ENUM_IDX_OR(c, animation, 0), c)
+
 #define ZAF_CHILD_ENTRY(child)                                                              \
     {                                                                                       \
         .event_type_idx    = DT_ENUM_IDX(child, event_type),                               \
+        .sub_idx           = _ZAF_SUB_IDX(child),                                          \
         .custom_name       = COND_CODE_1(DT_NODE_HAS_PROP(child, custom_event_name),       \
                                          (DT_PROP(child, custom_event_name)), (NULL)),      \
         .label             = COND_CODE_1(DT_NODE_HAS_PROP(child, label),                   \
                                          (DT_PROP(child, label)), (NULL)),                  \
-        .layer_index       = DT_PROP_OR(child, layer_index, 0),                            \
-        .batt_level        = DT_PROP_OR(child, battery_level, 1),                          \
-        .ble_profile_index = DT_PROP_OR(child, ble_profile_index, 0),                      \
-        .error_slot_index  = DT_PROP_OR(child, error_slot_index, 0),                       \
         .color_bytes       = DT_PROP(child, colors),                                       \
         .color_count       = DT_PROP_LEN(child, colors) / 3,                               \
         .animation         = DT_ENUM_IDX_OR(child, animation, 0),                          \
-        .persistent        = DT_PROP(child, persistent),                                   \
-        .blink_on_ms       = DT_PROP_OR(child, blink_on_ms, 0),                            \
-        .blink_off_ms      = DT_PROP_OR(child, blink_off_ms, 0),                           \
-        .breathe_duration_ms = DT_PROP_OR(child, breathe_duration_ms, 0),                  \
-        .flash_duration_ms = DT_PROP_OR(child, flash_duration_ms, 0),                      \
-        .flash_ease_in_ms  = DT_PROP_OR(child, flash_ease_in_ms, 0),                       \
-        .flash_ease_in_fn  = DT_ENUM_IDX_OR(child, flash_ease_in_fn, 0),                   \
-        .flash_ease_out_ms = DT_PROP_OR(child, flash_ease_out_ms, 0),                      \
-        .flash_ease_out_fn = DT_ENUM_IDX_OR(child, flash_ease_out_fn, 0),                  \
-        .feedback_pattern     = COND_CODE_1(DT_NODE_HAS_PROP(child, feedback_pattern),      \
+        .flags             = (DT_PROP(child, persistent) ? ZAF_CHILD_FLAG_PERSISTENT : 0)  \
+                           | (DT_PROP(child, headless)   ? ZAF_CHILD_FLAG_HEADLESS   : 0), \
+        _ZAF_CHILD_ANIM_INIT(child)                                                        \
+        .feedback_pattern     = COND_CODE_1(DT_NODE_HAS_PROP(child, feedback_pattern),     \
                                     (DT_PROP(child, feedback_pattern)), ({})),             \
         .feedback_pattern_len = COND_CODE_1(DT_NODE_HAS_PROP(child, feedback_pattern),    \
                                     (MIN(DT_PROP_LEN(child, feedback_pattern),             \
                                          CONFIG_ZMK_ADAPTIVE_FEEDBACK_FEEDBACK_PATTERN_MAX_LEN)), (0)), \
-        .headless             = DT_PROP(child, headless),                                  \
     },
 
 #define _ZAF_COUNT_CHILD(child) +1
@@ -865,11 +890,11 @@ static bool zaf_dt_child_matches(const struct zaf_dt_child *c,
                                   const uint8_t event_idx, const uint8_t sub_idx) {
     if (c->event_type_idx != event_idx) { return false; }
     switch (event_idx) {
-    case ZAF_EVTIDX_LAYER:       return c->layer_index == sub_idx;
-    case ZAF_EVTIDX_BATT_WARN:   return (c->batt_level - 1) == sub_idx;
-    case ZAF_EVTIDX_BATT_CRIT:   return (c->batt_level - 1) == sub_idx;
-    case ZAF_EVTIDX_BLE_PROFILE: return c->ble_profile_index == sub_idx;
-    case ZAF_EVTIDX_ERROR:       return c->error_slot_index == sub_idx;
+    case ZAF_EVTIDX_LAYER:       return c->sub_idx == sub_idx;
+    case ZAF_EVTIDX_BATT_WARN:   return (c->sub_idx - 1) == sub_idx;
+    case ZAF_EVTIDX_BATT_CRIT:   return (c->sub_idx - 1) == sub_idx;
+    case ZAF_EVTIDX_BLE_PROFILE: return c->sub_idx == sub_idx;
+    case ZAF_EVTIDX_ERROR:       return c->sub_idx == sub_idx;
     default:                     return true;
     }
 }
@@ -904,15 +929,25 @@ static void zaf_dt_child_to_event_info(const struct zaf_dt_child *c, struct zaf_
         out->colors[i].g = c->color_bytes[i * 3 + 1];
         out->colors[i].b = c->color_bytes[i * 3 + 2];
     }
-    out->animation           = c->animation;
-    out->blink_on_ms         = c->blink_on_ms;
-    out->blink_off_ms        = c->blink_off_ms;
-    out->flash_duration_ms   = c->flash_duration_ms;
-    out->flash_ease_in_ms    = c->flash_ease_in_ms;
-    out->flash_ease_in_fn    = c->flash_ease_in_fn;
-    out->flash_ease_out_ms   = c->flash_ease_out_ms;
-    out->flash_ease_out_fn   = c->flash_ease_out_fn;
-    out->breathe_duration_ms = c->breathe_duration_ms;
+    out->animation = c->animation;
+    switch (c->animation) {
+    case ZAF_ANIM_BLINK:
+        out->blink_on_ms  = c->anim.blink.on_ms;
+        out->blink_off_ms = c->anim.blink.off_ms;
+        break;
+    case ZAF_ANIM_FLASH:
+        out->flash_duration_ms = c->anim.flash.duration_ms;
+        out->flash_ease_in_ms  = c->anim.flash.ease_in_ms;
+        out->flash_ease_in_fn  = c->anim.flash.ease_in_fn;
+        out->flash_ease_out_ms = c->anim.flash.ease_out_ms;
+        out->flash_ease_out_fn = c->anim.flash.ease_out_fn;
+        break;
+    case ZAF_ANIM_BREATHE:
+        out->breathe_duration_ms = c->anim.breathe_duration_ms;
+        break;
+    default:
+        break;
+    }
     out->feedback_pattern_len = MIN(c->feedback_pattern_len,
                                     CONFIG_ZMK_ADAPTIVE_FEEDBACK_FEEDBACK_PATTERN_MAX_LEN);
     for (uint8_t i = 0; i < out->feedback_pattern_len; i++) {
@@ -929,7 +964,7 @@ static void zaf_apply_dt_children(void) {
         STRUCT_SECTION_FOREACH(zaf_custom_event, cevt) {
             if (strcmp(c->custom_name, cevt->name) != 0) { continue; }
             zaf_dt_child_to_event_info(c, &cevt->info);
-            cevt->headless = c->headless;
+            cevt->headless = (c->flags & ZAF_CHILD_FLAG_HEADLESS) != 0;
             break;
         }
     }
@@ -1137,12 +1172,12 @@ static void zaf_copy_event_info_to_out(struct zaf_event_info *out, const struct 
 
 bool zaf_event_is_headless(const uint8_t event_idx, const uint8_t sub_idx) {
     const struct zaf_dt_child *c = zaf_dt_child_find(event_idx, sub_idx);
-    return c ? c->headless : false;
+    return c ? (c->flags & ZAF_CHILD_FLAG_HEADLESS) != 0 : false;
 }
 
 bool zaf_event_is_persistent(const uint8_t event_idx, const uint8_t sub_idx) {
     const struct zaf_dt_child *c = zaf_dt_child_find(event_idx, sub_idx);
-    return c ? c->persistent : false;
+    return c ? (c->flags & ZAF_CHILD_FLAG_PERSISTENT) != 0 : false;
 }
 
 const char *zaf_event_get_label(const uint8_t event_idx, const uint8_t sub_idx) {
@@ -1159,7 +1194,7 @@ const char *zaf_custom_event_get_label(const struct zaf_custom_event *evt) {
 bool zaf_custom_event_is_persistent(const struct zaf_custom_event *evt) {
     if (!evt) { return false; }
     const struct zaf_dt_child *c = zaf_dt_child_find_custom(evt->name);
-    return c ? c->persistent : false;
+    return c ? (c->flags & ZAF_CHILD_FLAG_PERSISTENT) != 0 : false;
 }
 
 int zaf_event_get(const uint8_t event_idx, const uint8_t sub_idx, struct zaf_event_info *out) {
