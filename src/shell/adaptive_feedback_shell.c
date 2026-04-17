@@ -249,10 +249,6 @@ static int cmd_evt(const struct shell *sh, const size_t argc, char **argv) {
     }
 
     const char *prop  = argv[prop_off];
-    const int val_off = prop_off + 1;
-    const int nvals   = (int)argc - val_off;
-    char    **vals    = &argv[val_off];
-
     int rc = 0;
 
     /* ---- "show" is handled separately as it reads, not writes ---- */
@@ -275,9 +271,11 @@ static int cmd_evt(const struct shell *sh, const size_t argc, char **argv) {
         return rc;
     }
 
-    /* ---- Field setters shared by custom and built-in paths ---- */
     enum zaf_field field;
     union zaf_field_value val = {0};
+    const int val_off = prop_off + 1;
+    const int nvals   = (int)argc - val_off;
+    char    **vals    = &argv[val_off];
 
     if (strcmp(prop, "color") == 0) {
         uint8_t idx = 0;
@@ -400,6 +398,11 @@ static void print_custom_event(const struct shell *sh, const struct zaf_custom_e
     print_event_info(sh, &info, zaf_custom_event_get_label(evt), zaf_custom_event_is_persistent(evt));
 }
 
+static int cmd_state(const struct shell *sh, size_t argc, char **argv) {
+    shprint(sh, "state: %s", zaf_is_on() ? "on" : "off");
+    return 0;
+}
+
 static int cmd_status(const struct shell *sh, size_t argc, char **argv) {
     shprint(sh, "state: %s", zaf_is_on() ? "on" : "off");
 
@@ -446,13 +449,76 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv) {
     return 0;
 }
 
+static int cmd_list(const struct shell *sh, size_t argc, char **argv) {
+    bool first = true;
+    char name[32];
+
+#define _LIST_EVT(_name_str, _event_idx, _sub_idx)                                    \
+    do {                                                                               \
+        if (!zaf_event_is_headless((_event_idx), (_sub_idx))) {                        \
+            const char *_lbl = zaf_event_get_label((_event_idx), (_sub_idx));         \
+            if (!first) { shell_fprintf(sh, SHELL_NORMAL, ", "); }                    \
+            if (_lbl && _lbl[0]) {                                                     \
+                shell_fprintf(sh, SHELL_NORMAL, "%s (%s)", (_name_str), _lbl);        \
+            } else {                                                                   \
+                shell_fprintf(sh, SHELL_NORMAL, "%s", (_name_str));                   \
+            }                                                                          \
+            first = false;                                                             \
+        }                                                                              \
+    } while (0)
+
+    for (uint8_t i = 0; i < zaf_error_slots_count(); i++) {
+        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_ERROR], i);
+        _LIST_EVT(name, ZAF_EVTIDX_ERROR, i);
+    }
+    _LIST_EVT(zaf_evt_names[ZAF_EVTIDX_IDLE],          ZAF_EVTIDX_IDLE,          0);
+    _LIST_EVT(zaf_evt_names[ZAF_EVTIDX_USB_CONN],      ZAF_EVTIDX_USB_CONN,      0);
+    _LIST_EVT(zaf_evt_names[ZAF_EVTIDX_USB_DISCONN],   ZAF_EVTIDX_USB_DISCONN,   0);
+    for (uint8_t prof = 0; prof < CONFIG_BT_MAX_PAIRED; prof++) {
+        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_BLE_PROFILE], prof + 1);
+        _LIST_EVT(name, ZAF_EVTIDX_BLE_PROFILE, prof);
+    }
+    _LIST_EVT(zaf_evt_names[ZAF_EVTIDX_NO_ENDPOINT],   ZAF_EVTIDX_NO_ENDPOINT,   0);
+    _LIST_EVT(zaf_evt_names[ZAF_EVTIDX_STUDIO_UNLOCK], ZAF_EVTIDX_STUDIO_UNLOCK, 0);
+    _LIST_EVT(zaf_evt_names[ZAF_EVTIDX_STUDIO_LOCK],   ZAF_EVTIDX_STUDIO_LOCK,   0);
+    for (uint8_t lvl = 0; lvl < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT; lvl++) {
+        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_BATT_WARN], lvl + 1);
+        _LIST_EVT(name, ZAF_EVTIDX_BATT_WARN, lvl);
+    }
+    for (uint8_t lvl = 0; lvl < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT; lvl++) {
+        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_BATT_CRIT], lvl + 1);
+        _LIST_EVT(name, ZAF_EVTIDX_BATT_CRIT, lvl);
+    }
+    const uint8_t layers = zaf_layer_count();
+    for (uint8_t layer = 0; layer < layers; layer++) {
+        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_LAYER], layer);
+        _LIST_EVT(name, ZAF_EVTIDX_LAYER, layer);
+    }
+    STRUCT_SECTION_FOREACH(zaf_custom_event, cevt) {
+        if (!cevt->headless) {
+            const char *lbl = zaf_custom_event_get_label(cevt);
+            if (!first) { shell_fprintf(sh, SHELL_NORMAL, ", "); }
+            if (lbl && lbl[0]) {
+                shell_fprintf(sh, SHELL_NORMAL, "%s (%s)", cevt->name, lbl);
+            } else {
+                shell_fprintf(sh, SHELL_NORMAL, "%s", cevt->name);
+            }
+            first = false;
+        }
+    }
+#undef _LIST_EVT
+
+    shell_fprintf(sh, SHELL_NORMAL, "\n");
+    return 0;
+}
+
 static int cmd_error(const struct shell *sh, const size_t argc, char **argv) {
     if (argc < 3) {
         shprint(sh, "usage: argb error <slot> <trigger|clear|clear-all>");
         return -EINVAL;
     }
 
-    uint8_t slot = (uint8_t)strtol(argv[1], NULL, 10);
+    const uint8_t slot = (uint8_t)strtol(argv[1], NULL, 10);
     const char *action = argv[2];
     int rc = 0;
 
@@ -483,23 +549,12 @@ static int cmd_error(const struct shell *sh, const size_t argc, char **argv) {
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_argb,
     SHELL_CMD(on,     NULL, "Enable feedback",  cmd_on),
     SHELL_CMD(off,    NULL, "Disable feedback", cmd_off),
+    SHELL_CMD(state,  NULL, "Show on/off state", cmd_state),
     SHELL_CMD(status, NULL, "Show state and all event configs", cmd_status),
+    SHELL_CMD(list,   NULL, "List all available events", cmd_list),
     SHELL_CMD(clear,  NULL, "Clear all persisted settings", cmd_clear),
     SHELL_CMD_ARG(evt, NULL,
-        "Inspect or modify an event's LED config.\n"
-        "Usage: argb evt <layer <n>|batt-warn <1-3>|batt-crit <1-3>|idle|usb-conn|usb-disconn|"
-        "ble-profile <n>|no-endpoint|studio-unlock|studio-lock|error <n>|<custom-name>>"
-        " <show|color [<idx>] <r> <g> <b>|anim <solid|blink|breathe|flash>"
-        "|blink <on_ms> <off_ms>|flash <dur_ms>"
-        "|flash-ease-in <ms> <fn>|flash-ease-out <ms> <fn>|feedback <dur_ms>>\n"
-        "  color <r> <g> <b>         -- set colors[0], reset color count to 1\n"
-        "  color <idx> <r> <g> <b>   -- set colors[idx] (0-based), expand count if needed\n"
-        "  flash-ease-in <ms> <fn>   -- fade-in duration and curve for flash animation\n"
-        "  flash-ease-out <ms> <fn>  -- fade-out duration and curve for flash animation\n"
-        "  fn: linear|quad-in|quad-out|quad-in-out|cubic-in|cubic-out|cubic-in-out\n"
-        "      quart-in|quart-out|quart-in-out|expo-in|expo-out|bounce-out|bounce-in\n"
-        "  feedback <dur_ms>         -- haptic/LED feedback pulse duration for this event\n"
-        "  breathe <dur_ms>          -- breathe animation cycle duration in ms (0 for global default)",
+        "Inspect or modify an event's LED config.",
         cmd_evt, 3, 11),
     SHELL_CMD_ARG(error, NULL,
         "Error slot control.\n"

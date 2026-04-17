@@ -450,6 +450,50 @@ static void zaf_activate_flash_state(const uint16_t total_ticks,
     zaf_state.flash_ease_out_fn   = ease_out_fn;
 }
 
+static void __noinline zaf_fill_section(const uint16_t start, const uint16_t end,
+                                        const struct led_rgb color) {
+    for (uint16_t i = start; i < end && i < zaf_config.chain_length; i++) {
+        zaf_pixels[i] = color;
+    }
+}
+
+static struct zaf_rgb __noinline zaf_breathe_color(const struct zaf_event_info *cfg) {
+    const uint32_t dur = cfg->breathe_duration_ms;
+    const int32_t tick_ms = ZRC_GET("argb/tick", CONFIG_ZMK_ADAPTIVE_FEEDBACK_TICK_MS);
+    const uint16_t breathe_steps = (tick_ms > 0) ? (uint16_t)(dur / (uint32_t)tick_ms) : 60;
+    const int step       = (int)zaf_state.anim_step - (int)(breathe_steps / 2);
+    const int abs_step   = (step < 0) ? -step : step;
+    const int half_steps = (int)(breathe_steps / 2);
+    const uint8_t scale  = (half_steps > 0) ? (uint8_t)((100 * (half_steps - abs_step)) / half_steps) : 100;
+    const uint8_t idx    = zaf_state.color_idx % cfg->color_count;
+    const struct zaf_rgb base = cfg->colors[idx];
+    return (struct zaf_rgb){
+        .r = (uint8_t)((base.r * scale) / 100),
+        .g = (uint8_t)((base.g * scale) / 100),
+        .b = (uint8_t)((base.b * scale) / 100),
+    };
+}
+
+static uint8_t __noinline zaf_compute_flash_scale(
+    const uint16_t ease_in_ticks,  const uint8_t ease_in_fn,
+    const uint16_t ease_out_ticks, const uint8_t ease_out_fn)
+{
+    if (!zaf_state.flash_active) {
+        return 0;
+    }
+    const uint16_t elapsed = zaf_state.flash_total_ticks - zaf_state.flash_ticks;
+    if (ease_in_ticks > 0 && elapsed < ease_in_ticks) {
+        const uint8_t t = (uint8_t)((uint32_t)elapsed * 255u / ease_in_ticks);
+        return zaf_ease(ease_in_fn, t);
+    }
+    if (ease_out_ticks > 0 && zaf_state.flash_ticks <= ease_out_ticks) {
+        const uint16_t out = ease_out_ticks - zaf_state.flash_ticks;
+        const uint8_t t = (uint8_t)((uint32_t)out * 255u / ease_out_ticks);
+        return (uint8_t)(255u - zaf_ease(ease_out_fn, t));
+    }
+    return 255;
+}
+
 static void zaf_apply_animation(const struct zaf_event_info *cfg) {
     if (cfg->color_count == 0) {
         zaf_clear_pixels();
@@ -484,17 +528,7 @@ static void zaf_apply_animation(const struct zaf_event_info *cfg) {
         const uint32_t dur = cfg->breathe_duration_ms;
         const int32_t tick_ms = ZRC_GET("argb/tick", CONFIG_ZMK_ADAPTIVE_FEEDBACK_TICK_MS);
         const uint16_t breathe_steps = (tick_ms > 0) ? (uint16_t)(dur / (uint32_t)tick_ms) : 60;
-        const int step = (int)zaf_state.anim_step - (int)(breathe_steps / 2);
-        const int abs_step = (step < 0) ? -step : step;
-        const int half_steps = (int)(breathe_steps / 2);
-        const uint8_t scale = (half_steps > 0) ? (uint8_t)((100 * (half_steps - abs_step)) / half_steps) : 100;
-        const uint8_t idx = zaf_state.color_idx % cfg->color_count;
-        const struct zaf_rgb base = cfg->colors[idx];
-        const struct zaf_rgb bc = {
-            .r = (uint8_t)((base.r * scale) / 100),
-            .g = (uint8_t)((base.g * scale) / 100),
-            .b = (uint8_t)((base.b * scale) / 100),
-        };
+        const struct zaf_rgb bc = zaf_breathe_color(cfg);
         zaf_fill(bc);
         zaf_state.anim_step++;
         if (zaf_state.anim_step >= breathe_steps) {
@@ -505,21 +539,12 @@ static void zaf_apply_animation(const struct zaf_event_info *cfg) {
     }
 
     case ZAF_ANIM_FLASH: {
-        if (!zaf_state.flash_active) {
+        const uint8_t scale = zaf_compute_flash_scale(
+            zaf_state.flash_ease_in_ticks,  zaf_state.flash_ease_in_fn,
+            zaf_state.flash_ease_out_ticks, zaf_state.flash_ease_out_fn);
+        if (scale == 0) {
             zaf_clear_pixels();
             break;
-        }
-        uint8_t scale = 255;
-        const uint16_t elapsed = zaf_state.flash_total_ticks - zaf_state.flash_ticks;
-        if (zaf_state.flash_ease_in_ticks > 0 &&
-            elapsed < zaf_state.flash_ease_in_ticks) {
-            const uint8_t t = (uint8_t)((uint32_t)elapsed * 255u / zaf_state.flash_ease_in_ticks);
-            scale = zaf_ease(zaf_state.flash_ease_in_fn, t);
-        } else if (zaf_state.flash_ease_out_ticks > 0 &&
-                   zaf_state.flash_ticks <= zaf_state.flash_ease_out_ticks) {
-            const uint16_t out_elapsed = zaf_state.flash_ease_out_ticks - zaf_state.flash_ticks;
-            const uint8_t t = (uint8_t)((uint32_t)out_elapsed * 255u / zaf_state.flash_ease_out_ticks);
-            scale = (uint8_t)(255u - zaf_ease(zaf_state.flash_ease_out_fn, t));
         }
         const struct zaf_rgb scaled = {
             .r = (uint8_t)(((uint16_t)c0.r * scale) >> 8),
@@ -600,32 +625,31 @@ static void zaf_tick_reset_blink(void) {
     zaf_state.blink_phase_ticks = 0;
 }
 
+static bool __noinline zaf_tick_decrement(uint16_t *ticks) {
+    if (*ticks != 0xFFFF && *ticks > 0 && --(*ticks) == 0) {
+        *ticks = 0xFFFF;
+        return true;
+    }
+    return false;
+}
+
 static void zaf_tick(struct k_work *work) {
     if (!zaf_state.on) {
         return;
     }
 
-    if (zaf_state.usb_event_ticks != 0xFFFF && zaf_state.usb_event_ticks > 0) {
-        if (--zaf_state.usb_event_ticks == 0) {
-            zaf_state.usb_event_ticks = 0xFFFF;
-            zaf_tick_reset_blink();
-        }
+    if (zaf_tick_decrement(&zaf_state.usb_event_ticks)) {
+        zaf_tick_reset_blink();
     }
 
     for (int i = 0; i < CONFIG_BT_MAX_PAIRED; i++) {
-        if (zaf_state.ble_event_ticks[i] != 0xFFFF && zaf_state.ble_event_ticks[i] > 0) {
-            if (--zaf_state.ble_event_ticks[i] == 0) {
-                zaf_state.ble_event_ticks[i] = 0xFFFF;
-                zaf_tick_reset_blink();
-            }
+        if (zaf_tick_decrement(&zaf_state.ble_event_ticks[i])) {
+            zaf_tick_reset_blink();
         }
     }
 
-    if (zaf_state.studio_event_ticks != 0xFFFF && zaf_state.studio_event_ticks > 0) {
-        if (--zaf_state.studio_event_ticks == 0) {
-            zaf_state.studio_event_ticks = 0xFFFF;
-            zaf_tick_reset_blink();
-        }
+    if (zaf_tick_decrement(&zaf_state.studio_event_ticks)) {
+        zaf_tick_reset_blink();
     }
 
     STRUCT_SECTION_FOREACH(zaf_custom_event, cevt) {
@@ -638,17 +662,11 @@ static void zaf_tick(struct k_work *work) {
     }
 
     for (int i = 0; i < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT; i++) {
-        if (zaf_state.batt_warn_ticks[i] != 0xFFFF && zaf_state.batt_warn_ticks[i] > 0) {
-            if (--zaf_state.batt_warn_ticks[i] == 0) {
-                zaf_state.batt_warn_ticks[i] = 0xFFFF;
-                zaf_tick_reset_blink();
-            }
+        if (zaf_tick_decrement(&zaf_state.batt_warn_ticks[i])) {
+            zaf_tick_reset_blink();
         }
-        if (zaf_state.batt_crit_ticks[i] != 0xFFFF && zaf_state.batt_crit_ticks[i] > 0) {
-            if (--zaf_state.batt_crit_ticks[i] == 0) {
-                zaf_state.batt_crit_ticks[i] = 0xFFFF;
-                zaf_tick_reset_blink();
-            }
+        if (zaf_tick_decrement(&zaf_state.batt_crit_ticks[i])) {
+            zaf_tick_reset_blink();
         }
     }
 
@@ -1579,29 +1597,18 @@ static void zaf_apply_error_sections(void) {
         switch (cfg->animation) {
         case ZAF_ANIM_SOLID: {
             const struct zaf_rgb c0 = cfg->colors[0];
-            const struct led_rgb sc = {
-                .r = c0.r,
-                .g = c0.g,
-                .b = c0.b,
-            };
-            for (uint16_t i = start; i < end && i < zaf_config.chain_length; i++) {
-                zaf_pixels[i] = sc;
-            }
+            const struct led_rgb sc = { .r = c0.r, .g = c0.g, .b = c0.b };
+            zaf_fill_section(start, end, sc);
             break;
         }
 
         case ZAF_ANIM_BLINK: {
             const uint8_t idx = zaf_state.color_idx % cfg->color_count;
             const struct zaf_rgb c_cur = cfg->colors[idx];
-            struct led_rgb sc = {0, 0, 0};
-            if (zaf_state.blink_phase) {
-                sc.r = c_cur.r;
-                sc.g = c_cur.g;
-                sc.b = c_cur.b;
-            }
-            for (uint16_t i = start; i < end && i < zaf_config.chain_length; i++) {
-                zaf_pixels[i] = sc;
-            }
+            const struct led_rgb sc = zaf_state.blink_phase
+                ? (struct led_rgb){ .r = c_cur.r, .g = c_cur.g, .b = c_cur.b }
+                : (struct led_rgb){ 0, 0, 0 };
+            zaf_fill_section(start, end, sc);
             break;
         }
 
@@ -1609,60 +1616,30 @@ static void zaf_apply_error_sections(void) {
             const uint32_t dur = cfg->breathe_duration_ms;
             const int32_t tick_ms = ZRC_GET("argb/tick", CONFIG_ZMK_ADAPTIVE_FEEDBACK_TICK_MS);
             const uint16_t breathe_steps = (tick_ms > 0) ? (uint16_t)(dur / (uint32_t)tick_ms) : 60;
-            const int step = (int)zaf_state.anim_step - (int)(breathe_steps / 2);
-            const int abs_step = (step < 0) ? -step : step;
-            const int half_steps = (int)(breathe_steps / 2);
-            const uint8_t scale = (half_steps > 0) ? (uint8_t)((100 * (half_steps - abs_step)) / half_steps) : 100;
-            const uint8_t idx = zaf_state.color_idx % cfg->color_count;
-            const struct zaf_rgb base = cfg->colors[idx];
-            const struct led_rgb bc = {
-                .r = (uint8_t)((base.r * scale) / 100),
-                .g = (uint8_t)((base.g * scale) / 100),
-                .b = (uint8_t)((base.b * scale) / 100),
-            };
+            const struct zaf_rgb bc = zaf_breathe_color(cfg);
+            const struct led_rgb lbc = { .r = bc.r, .g = bc.g, .b = bc.b };
             zaf_state.anim_step++;
             if (zaf_state.anim_step >= breathe_steps) {
                 zaf_state.anim_step = 0;
                 zaf_state.color_idx = (zaf_state.color_idx + 1) % cfg->color_count;
             }
-            for (uint16_t i = start; i < end && i < zaf_config.chain_length; i++) {
-                zaf_pixels[i] = bc;
-            }
+            zaf_fill_section(start, end, lbc);
             break;
         }
 
         case ZAF_ANIM_FLASH: {
-            if (!zaf_state.flash_active) {
-                // ReSharper disable once CppTooWideScope
-                const struct led_rgb off = {0, 0, 0};
-                for (uint16_t i = start; i < end && i < zaf_config.chain_length; i++) {
-                    zaf_pixels[i] = off;
-                }
-                break;
-            }
-            uint8_t scale = 255;
-            const uint16_t elapsed = zaf_state.flash_total_ticks - zaf_state.flash_ticks;
-            if (cfg->flash_ease_in_ms > 0 &&
-                elapsed < zaf_ticks_from_ms(cfg->flash_ease_in_ms)) {
-                const uint16_t ease_ticks = zaf_ticks_from_ms(cfg->flash_ease_in_ms);
-                const uint8_t t = (uint8_t)((uint32_t)elapsed * 255u / ease_ticks);
-                scale = zaf_ease(cfg->flash_ease_in_fn, t);
-            } else if (cfg->flash_ease_out_ms > 0 &&
-                       zaf_state.flash_ticks <= zaf_ticks_from_ms(cfg->flash_ease_out_ms)) {
-                const uint16_t ease_ticks = zaf_ticks_from_ms(cfg->flash_ease_out_ms);
-                const uint16_t out_elapsed = zaf_ticks_from_ms(cfg->flash_ease_out_ms) - zaf_state.flash_ticks;
-                const uint8_t t = (uint8_t)((uint32_t)out_elapsed * 255u / ease_ticks);
-                scale = (uint8_t)(255u - zaf_ease(cfg->flash_ease_out_fn, t));
-            }
+            const uint16_t ei_ticks = zaf_ticks_from_ms(cfg->flash_ease_in_ms);
+            const uint16_t eo_ticks = zaf_ticks_from_ms(cfg->flash_ease_out_ms);
+            const uint8_t scale = zaf_compute_flash_scale(
+                ei_ticks, cfg->flash_ease_in_fn,
+                eo_ticks, cfg->flash_ease_out_fn);
             const struct zaf_rgb c0 = cfg->colors[0];
             const struct led_rgb sc = {
                 .r = (uint8_t)(((uint16_t)c0.r * scale) >> 8),
                 .g = (uint8_t)(((uint16_t)c0.g * scale) >> 8),
                 .b = (uint8_t)(((uint16_t)c0.b * scale) >> 8),
             };
-            for (uint16_t i = start; i < end && i < zaf_config.chain_length; i++) {
-                zaf_pixels[i] = sc;
-            }
+            zaf_fill_section(start, end, sc);
             break;
         }
 
