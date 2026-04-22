@@ -70,6 +70,14 @@ config ZMK_ADAPTIVE_FEEDBACK_FEEDBACK_PATTERN_MAX_LEN
     default 4
     range 1 32
 
+config ADAPTIVE_FEEDBACK_MAX_BT_DEVICES
+    int "Maximum number of BLE profile slots tracked by adaptive feedback"
+    default 5
+    range 1 16
+    help
+      Decoupled from CONFIG_BT_MAX_PAIRED so the feedback module can size
+      its per-profile state independently of the BLE stack's bond table.
+
 endif
 
 rsource "shell/Kconfig"

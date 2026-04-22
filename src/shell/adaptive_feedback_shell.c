@@ -99,12 +99,12 @@ static int parse_event_spec(const struct shell *sh,
         *consumed  = 2;
     } else if (strcmp(type, zaf_evt_names[ZAF_EVTIDX_BLE_PROFILE]) == 0) {
         if (argc < 2) {
-            shprint(sh, "ble-profile requires a profile index 1-%d", CONFIG_BT_MAX_PAIRED);
+            shprint(sh, "ble-profile requires a profile index 1-%d", CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES);
             return -EINVAL;
         }
         const int prof = (int)strtol(argv[1], NULL, 10);
-        if (prof < 1 || prof > CONFIG_BT_MAX_PAIRED) {
-            shprint(sh, "ble-profile index must be 1-%d", CONFIG_BT_MAX_PAIRED);
+        if (prof < 1 || prof > CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES) {
+            shprint(sh, "ble-profile index must be 1-%d", CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES);
             return -EINVAL;
         }
         *event_idx = ZAF_EVTIDX_BLE_PROFILE;
@@ -415,7 +415,7 @@ static int cmd_status(const struct shell *sh, size_t argc, char **argv) {
     print_named_event(sh, zaf_evt_names[ZAF_EVTIDX_IDLE],          ZAF_EVTIDX_IDLE,          0);
     print_named_event(sh, zaf_evt_names[ZAF_EVTIDX_USB_CONN],      ZAF_EVTIDX_USB_CONN,      0);
     print_named_event(sh, zaf_evt_names[ZAF_EVTIDX_USB_DISCONN],   ZAF_EVTIDX_USB_DISCONN,   0);
-    for (uint8_t prof = 0; prof < CONFIG_BT_MAX_PAIRED; prof++) {
+    for (uint8_t prof = 0; prof < CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES; prof++) {
         char name[24];
         snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_BLE_PROFILE], prof + 1);
         print_named_event(sh, name, ZAF_EVTIDX_BLE_PROFILE, prof);
@@ -474,7 +474,7 @@ static int cmd_list(const struct shell *sh, size_t argc, char **argv) {
     _LIST_EVT(zaf_evt_names[ZAF_EVTIDX_IDLE],          ZAF_EVTIDX_IDLE,          0);
     _LIST_EVT(zaf_evt_names[ZAF_EVTIDX_USB_CONN],      ZAF_EVTIDX_USB_CONN,      0);
     _LIST_EVT(zaf_evt_names[ZAF_EVTIDX_USB_DISCONN],   ZAF_EVTIDX_USB_DISCONN,   0);
-    for (uint8_t prof = 0; prof < CONFIG_BT_MAX_PAIRED; prof++) {
+    for (uint8_t prof = 0; prof < CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES; prof++) {
         snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_BLE_PROFILE], prof + 1);
         _LIST_EVT(name, ZAF_EVTIDX_BLE_PROFILE, prof);
     }

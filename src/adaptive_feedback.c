@@ -66,7 +66,7 @@ struct zaf_evt_state {
     struct zaf_evt_override rt_idle;
     struct zaf_evt_override rt_usb_conn;
     struct zaf_evt_override rt_usb_disconn;
-    struct zaf_evt_override rt_ble_profile[CONFIG_BT_MAX_PAIRED];
+    struct zaf_evt_override rt_ble_profile[CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES];
     struct zaf_evt_override rt_no_endpoint;
     struct zaf_evt_override rt_batt_warn[CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT];
     struct zaf_evt_override rt_batt_crit[CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT];
@@ -90,7 +90,7 @@ struct __attribute__((__packed__)) zaf_runtime_state {
     bool usb_connected;
     bool ble_connected;
     bool no_endpoint;
-    uint16_t ble_event_ticks[CONFIG_BT_MAX_PAIRED];
+    uint16_t ble_event_ticks[CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES];
     bool studio_unlocked;
     uint16_t studio_event_ticks;
     bool idle;
@@ -278,7 +278,7 @@ static const struct zaf_event_info *zaf_resolve(void) {
                                ? ZAF_EVTIDX_USB_CONN : ZAF_EVTIDX_USB_DISCONN, 0);
     }
 
-    for (int i = CONFIG_BT_MAX_PAIRED - 1; i >= 0; i--) {
+    for (int i = CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES - 1; i >= 0; i--) {
         if (zaf_state.ble_event_ticks[i] != 0xFFFF) {
             return zaf_evt_eff_cfg(ZAF_EVTIDX_BLE_PROFILE, (uint8_t)i);
         }
@@ -667,7 +667,7 @@ static void zaf_tick(struct k_work *work) {
         zaf_tick_reset_blink();
     }
 
-    for (int i = 0; i < CONFIG_BT_MAX_PAIRED; i++) {
+    for (int i = 0; i < CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES; i++) {
         if (zaf_tick_decrement(&zaf_state.ble_event_ticks[i])) {
             zaf_tick_reset_blink();
         }
@@ -1010,7 +1010,7 @@ static int zaf_init(void) {
 
     zaf_state.usb_event_ticks   = 0xFFFF;
     zaf_state.studio_event_ticks = 0xFFFF;
-    for (int i = 0; i < CONFIG_BT_MAX_PAIRED; i++) {
+    for (int i = 0; i < CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES; i++) {
         zaf_state.ble_event_ticks[i] = 0xFFFF;
     }
     for (int i = 0; i < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT; i++) {
@@ -1126,7 +1126,7 @@ static struct zaf_evt_override *zaf_evt_rt_slot(const uint8_t event_idx, const u
     case ZAF_EVTIDX_USB_CONN:       return &zaf_state.evts.rt_usb_conn;
     case ZAF_EVTIDX_USB_DISCONN:    return &zaf_state.evts.rt_usb_disconn;
     case ZAF_EVTIDX_BLE_PROFILE:
-        if (sub_idx < CONFIG_BT_MAX_PAIRED) return &zaf_state.evts.rt_ble_profile[sub_idx];
+        if (sub_idx < CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES) return &zaf_state.evts.rt_ble_profile[sub_idx];
         return NULL;
     case ZAF_EVTIDX_IDLE:           return &zaf_state.evts.rt_idle;
     case ZAF_EVTIDX_NO_ENDPOINT:    return &zaf_state.evts.rt_no_endpoint;
@@ -1286,7 +1286,7 @@ int zaf_clear_persisted(void) {
     zaf_state.evts.rt_idle.valid          = false;
     zaf_state.evts.rt_usb_conn.valid      = false;
     zaf_state.evts.rt_usb_disconn.valid   = false;
-    for (int i = 0; i < CONFIG_BT_MAX_PAIRED; i++) {
+    for (int i = 0; i < CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES; i++) {
         zaf_state.evts.rt_ble_profile[i].valid = false;
     }
     zaf_state.evts.rt_no_endpoint.valid   = false;
@@ -1426,7 +1426,7 @@ static int zaf_event_listener(const zmk_event_t *eh) {
         zaf_state.ble_connected = zmk_ble_active_profile_is_connected();
         zaf_eval_no_endpoint();
         const uint8_t profile_idx = ble->index;
-        if (profile_idx < CONFIG_BT_MAX_PAIRED) {
+        if (profile_idx < CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES) {
             zaf_evt_activate(zaf_evt_eff_cfg(ZAF_EVTIDX_BLE_PROFILE, profile_idx),
                              &zaf_state.ble_event_ticks[profile_idx]);
         }
