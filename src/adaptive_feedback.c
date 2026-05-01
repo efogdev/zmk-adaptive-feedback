@@ -89,7 +89,7 @@ struct __attribute__((__packed__)) zaf_runtime_state {
     uint16_t usb_event_ticks;
     bool usb_connected;
     bool ble_connected;
-    bool no_endpoint;
+    uint16_t no_endpoint_event_ticks;
     uint16_t ble_event_ticks[CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES];
     bool studio_unlocked;
     uint16_t studio_event_ticks;
@@ -256,6 +256,7 @@ static void zaf_apply_error_sections(void);
 static void zaf_copy_animation_fields(struct zaf_event_info *dst, const struct zaf_event_info *src);
 static void zaf_copy_feedback_pattern(struct zaf_event_info *dst, const struct zaf_event_info *src);
 static void zaf_copy_colors(struct zaf_event_info *dst, const struct zaf_event_info *src);
+static void zaf_evt_activate(const struct zaf_event_info *ecfg, uint16_t *ticks_out);
 
 static const struct zaf_event_info *zaf_resolve(void) {
     if (zaf_state.override_active) {
@@ -289,10 +290,6 @@ static const struct zaf_event_info *zaf_resolve(void) {
                                ? ZAF_EVTIDX_STUDIO_UNLOCK : ZAF_EVTIDX_STUDIO_LOCK, 0);
     }
 
-    if (zaf_state.no_endpoint) {
-        return zaf_evt_eff_cfg(ZAF_EVTIDX_NO_ENDPOINT, 0);
-    }
-
     STRUCT_SECTION_FOREACH(zaf_custom_event, cevt) {
         if (cevt->pending && cevt->info.color_count > 0) {
             static struct zaf_event_info zaf_custom_resolve_buf;
@@ -319,6 +316,10 @@ static const struct zaf_event_info *zaf_resolve(void) {
 
     if (zaf_state.idle) {
         return zaf_evt_eff_cfg(ZAF_EVTIDX_IDLE, 0);
+    }
+
+    if (zaf_state.no_endpoint_event_ticks != 0xFFFF) {
+        return zaf_evt_eff_cfg(ZAF_EVTIDX_NO_ENDPOINT, 0);
     }
 
     return NULL;
@@ -971,7 +972,13 @@ static void zaf_apply_dt_children(void) {
 }
 
 static void zaf_eval_no_endpoint(void) {
-    zaf_state.no_endpoint = !zaf_state.usb_connected && !zaf_state.ble_connected;
+    static bool prev_no_ep = false;
+    const bool now_no_ep = !zaf_state.usb_connected && !zaf_state.ble_connected;
+    if (now_no_ep && !prev_no_ep) {
+        zaf_evt_activate(zaf_evt_eff_cfg(ZAF_EVTIDX_NO_ENDPOINT, 0),
+                         &zaf_state.no_endpoint_event_ticks);
+    }
+    prev_no_ep = now_no_ep;
 }
 
 static int zaf_init(void) {
@@ -1009,6 +1016,7 @@ static int zaf_init(void) {
     zaf_state.active_layer = 0;
 
     zaf_state.usb_event_ticks   = 0xFFFF;
+    zaf_state.no_endpoint_event_ticks = 0xFFFF;
     zaf_state.studio_event_ticks = 0xFFFF;
     for (int i = 0; i < CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES; i++) {
         zaf_state.ble_event_ticks[i] = 0xFFFF;
