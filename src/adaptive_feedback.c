@@ -520,31 +520,37 @@ static uint8_t __noinline zaf_compute_flash_scale(
     return 255;
 }
 
-static void zaf_apply_animation(const struct zaf_event_info *cfg) {
+static void zaf_render_section(const struct zaf_event_info *cfg,
+                               uint16_t start, uint16_t end,
+                               bool is_main_path) {
     if (cfg->color_count == 0) {
-        zaf_clear_pixels();
+        if (is_main_path) zaf_clear_pixels();
         return;
     }
 
     const struct zaf_rgb c0 = cfg->colors[0];
+    struct zaf_rgb out;
+
     switch (cfg->animation) {
     case ZAF_ANIM_SOLID:
-        zaf_fill(c0);
+        out = c0;
         break;
 
     case ZAF_ANIM_BLINK: {
-        const uint16_t phase_ms = zaf_state.blink_phase ? cfg->blink_on_ms : cfg->blink_off_ms;
-        const uint16_t phase_ticks = zaf_ticks_from_ms(phase_ms);
         const uint8_t idx = zaf_state.color_idx % cfg->color_count;
         const struct zaf_rgb c_cur = cfg->colors[idx];
         const struct zaf_rgb off = {0, 0, 0};
-        zaf_fill(zaf_state.blink_phase ? c_cur : off);
-        zaf_state.blink_phase_ticks++;
-        if (zaf_state.blink_phase_ticks >= phase_ticks) {
-            zaf_state.blink_phase = !zaf_state.blink_phase;
-            zaf_state.blink_phase_ticks = 0;
-            if (zaf_state.blink_phase) {
-                zaf_state.color_idx = (zaf_state.color_idx + 1) % cfg->color_count;
+        out = zaf_state.blink_phase ? c_cur : off;
+        if (is_main_path) {
+            const uint16_t phase_ms = zaf_state.blink_phase ? cfg->blink_on_ms : cfg->blink_off_ms;
+            const uint16_t phase_ticks = zaf_ticks_from_ms(phase_ms);
+            zaf_state.blink_phase_ticks++;
+            if (zaf_state.blink_phase_ticks >= phase_ticks) {
+                zaf_state.blink_phase = !zaf_state.blink_phase;
+                zaf_state.blink_phase_ticks = 0;
+                if (zaf_state.blink_phase) {
+                    zaf_state.color_idx = (zaf_state.color_idx + 1) % cfg->color_count;
+                }
             }
         }
         break;
@@ -554,8 +560,7 @@ static void zaf_apply_animation(const struct zaf_event_info *cfg) {
         const uint32_t dur = cfg->breathe_duration_ms;
         const int32_t tick_ms = ZRC_GET("argb/tick", CONFIG_ZMK_ADAPTIVE_FEEDBACK_TICK_MS);
         const uint16_t breathe_steps = (tick_ms > 0) ? (uint16_t)(dur / (uint32_t)tick_ms) : 60;
-        const struct zaf_rgb bc = zaf_breathe_color(cfg);
-        zaf_fill(bc);
+        out = zaf_breathe_color(cfg);
         zaf_state.anim_step++;
         if (zaf_state.anim_step >= breathe_steps) {
             zaf_state.anim_step = 0;
@@ -565,23 +570,44 @@ static void zaf_apply_animation(const struct zaf_event_info *cfg) {
     }
 
     case ZAF_ANIM_FLASH: {
-        const uint8_t scale = zaf_compute_flash_scale(
-            zaf_state.flash_ease_in_ticks,  zaf_state.flash_ease_in_fn,
-            zaf_state.flash_ease_out_ticks, zaf_state.flash_ease_out_fn);
-        if (scale == 0) {
-            zaf_clear_pixels();
-            break;
+        uint16_t ei_ticks, eo_ticks;
+        uint8_t ei_fn, eo_fn;
+        if (is_main_path) {
+            ei_ticks = zaf_state.flash_ease_in_ticks;
+            ei_fn    = zaf_state.flash_ease_in_fn;
+            eo_ticks = zaf_state.flash_ease_out_ticks;
+            eo_fn    = zaf_state.flash_ease_out_fn;
+        } else {
+            ei_ticks = zaf_ticks_from_ms(cfg->flash_ease_in_ms);
+            ei_fn    = cfg->flash_ease_in_fn;
+            eo_ticks = zaf_ticks_from_ms(cfg->flash_ease_out_ms);
+            eo_fn    = cfg->flash_ease_out_fn;
         }
-        const struct zaf_rgb scaled = {
+        const uint8_t scale = zaf_compute_flash_scale(ei_ticks, ei_fn, eo_ticks, eo_fn);
+        if (scale == 0) {
+            if (is_main_path) zaf_clear_pixels();
+            return;
+        }
+        out = (struct zaf_rgb){
             .r = (uint8_t)(((uint16_t)c0.r * scale) >> 8),
             .g = (uint8_t)(((uint16_t)c0.g * scale) >> 8),
             .b = (uint8_t)(((uint16_t)c0.b * scale) >> 8),
         };
-        zaf_fill(scaled);
         break;
     }
-    default: break;
+
+    default: return;
     }
+
+    if (is_main_path) {
+        zaf_fill(out);
+    } else {
+        zaf_fill_section(start, end, (struct led_rgb){.r = out.r, .g = out.g, .b = out.b});
+    }
+}
+
+static void zaf_apply_animation(const struct zaf_event_info *cfg) {
+    zaf_render_section(cfg, 0, zaf_config.chain_length, true);
 }
 
 static void zaf_feedback_step(void);
@@ -1018,13 +1044,9 @@ static int zaf_init(void) {
     zaf_state.usb_event_ticks   = 0xFFFF;
     zaf_state.no_endpoint_event_ticks = 0xFFFF;
     zaf_state.studio_event_ticks = 0xFFFF;
-    for (int i = 0; i < CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES; i++) {
-        zaf_state.ble_event_ticks[i] = 0xFFFF;
-    }
-    for (int i = 0; i < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT; i++) {
-        zaf_state.batt_warn_ticks[i] = 0xFFFF;
-        zaf_state.batt_crit_ticks[i] = 0xFFFF;
-    }
+    memset(zaf_state.ble_event_ticks, 0xFF, sizeof(zaf_state.ble_event_ticks));
+    memset(zaf_state.batt_warn_ticks, 0xFF, sizeof(zaf_state.batt_warn_ticks));
+    memset(zaf_state.batt_crit_ticks, 0xFF, sizeof(zaf_state.batt_crit_ticks));
 
     k_work_init_delayable(&zaf_save_work, zaf_save_work_fn);
     k_work_init_delayable(&zaf_save_evt_work, zaf_save_evt_work_fn);
@@ -1286,6 +1308,10 @@ int zaf_event_set(const uint8_t event_idx, const uint8_t sub_idx,
     return zaf_evt_set_impl(event_idx, sub_idx, field, val);
 }
 
+static void zaf_clear_valid_array(struct zaf_evt_override *arr, size_t n) {
+    for (size_t i = 0; i < n; i++) arr[i].valid = false;
+}
+
 int zaf_clear_persisted(void) {
     zaf_state.on              = true;
     zaf_state.override_active = false;
@@ -1294,21 +1320,18 @@ int zaf_clear_persisted(void) {
     zaf_state.evts.rt_idle.valid          = false;
     zaf_state.evts.rt_usb_conn.valid      = false;
     zaf_state.evts.rt_usb_disconn.valid   = false;
-    for (int i = 0; i < CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES; i++) {
-        zaf_state.evts.rt_ble_profile[i].valid = false;
-    }
     zaf_state.evts.rt_no_endpoint.valid   = false;
     zaf_state.evts.rt_studio_unlock.valid = false;
     zaf_state.evts.rt_studio_lock.valid   = false;
 
-    for (int i = 0; i < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT; i++) {
-        zaf_state.evts.rt_batt_warn[i].valid = false;
-        zaf_state.evts.rt_batt_crit[i].valid = false;
-    }
-    for (int i = 0; i < ZMK_KEYMAP_LAYERS_LEN; i++) {
-        zaf_state.evts.rt_layers[i].valid = false;
-    }
-    for (uint8_t i = 0; i < zaf_config.error_slots && i < CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_ERROR_SLOTS; i++) {
+    zaf_clear_valid_array(zaf_state.evts.rt_ble_profile, CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES);
+    zaf_clear_valid_array(zaf_state.evts.rt_batt_warn, CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT);
+    zaf_clear_valid_array(zaf_state.evts.rt_batt_crit, CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT);
+    zaf_clear_valid_array(zaf_state.evts.rt_layers, ZMK_KEYMAP_LAYERS_LEN);
+
+    const uint8_t err_count = MIN(zaf_config.error_slots,
+                                  (uint8_t)CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_ERROR_SLOTS);
+    for (uint8_t i = 0; i < err_count; i++) {
         zaf_state.evts.rt_error_slots[i].valid = false;
         zaf_state.evts.rt_error_slots[i].cleared = true;
     }
@@ -1326,17 +1349,20 @@ int zaf_clear_persisted(void) {
 }
 
 static void zaf_evt_activate(const struct zaf_event_info *ecfg, uint16_t *ticks_out) {
-    const uint16_t ticks = ecfg ? zaf_ticks_from_ms(ecfg->flash_duration_ms) : 1;
-    *ticks_out = ticks > 0 ? ticks : 1;
-    zaf_tick_reset_blink();
-    if (ecfg) {
-        if (ecfg->animation == ZAF_ANIM_FLASH) {
-            zaf_activate_flash_state(*ticks_out,
-                ecfg->flash_ease_in_ms, ecfg->flash_ease_in_fn,
-                ecfg->flash_ease_out_ms, ecfg->flash_ease_out_fn);
-        }
-        zaf_trigger_feedback(ecfg->feedback_pattern, ecfg->feedback_pattern_len);
+    if (!ecfg) {
+        if (ticks_out) *ticks_out = 1;
+        return;
     }
+    const uint16_t ticks = zaf_ticks_from_ms(ecfg->flash_duration_ms);
+    const uint16_t safe_ticks = ticks > 0 ? ticks : 1;
+    if (ticks_out) *ticks_out = safe_ticks;
+    zaf_tick_reset_blink();
+    if (ecfg->animation == ZAF_ANIM_FLASH) {
+        zaf_activate_flash_state(safe_ticks,
+            ecfg->flash_ease_in_ms, ecfg->flash_ease_in_fn,
+            ecfg->flash_ease_out_ms, ecfg->flash_ease_out_fn);
+    }
+    zaf_trigger_feedback(ecfg->feedback_pattern, ecfg->feedback_pattern_len);
 }
 
 static int zaf_event_listener(const zmk_event_t *eh) {
@@ -1374,17 +1400,7 @@ static int zaf_event_listener(const zmk_event_t *eh) {
     if (act) {
         const bool now_idle = (act->state != ZMK_ACTIVITY_ACTIVE);
         if (now_idle && !zaf_state.idle) {
-            const struct zaf_event_info *icfg = zaf_evt_eff_cfg(ZAF_EVTIDX_IDLE, 0);
-            if (icfg != NULL) {
-                zaf_tick_reset_blink();
-                if (icfg->animation == ZAF_ANIM_FLASH) {
-                    const uint16_t ticks = zaf_ticks_from_ms(icfg->flash_duration_ms);
-                    zaf_activate_flash_state(ticks > 0 ? ticks : 1,
-                        icfg->flash_ease_in_ms, icfg->flash_ease_in_fn,
-                        icfg->flash_ease_out_ms, icfg->flash_ease_out_fn);
-                }
-                zaf_trigger_feedback(icfg->feedback_pattern, icfg->feedback_pattern_len);
-            }
+            zaf_evt_activate(zaf_evt_eff_cfg(ZAF_EVTIDX_IDLE, 0), NULL);
         }
         zaf_state.idle = now_idle;
         zaf_kick_timer();
@@ -1412,18 +1428,10 @@ static int zaf_event_listener(const zmk_event_t *eh) {
         zaf_state.active_layer = l;
         zaf_state.anim_step     = 0;
         zaf_state.color_idx    = 0;
-        zaf_tick_reset_blink();
         if (layer->state && l < ZMK_KEYMAP_LAYERS_LEN) {
-            const struct zaf_event_info *lcfg = zaf_evt_eff_cfg(ZAF_EVTIDX_LAYER, l);
-            if (lcfg != NULL) {
-                if (lcfg->animation == ZAF_ANIM_FLASH) {
-                    const uint16_t ticks = zaf_ticks_from_ms(lcfg->flash_duration_ms);
-                    zaf_activate_flash_state(ticks > 0 ? ticks : 1,
-                        lcfg->flash_ease_in_ms, lcfg->flash_ease_in_fn,
-                        lcfg->flash_ease_out_ms, lcfg->flash_ease_out_fn);
-                }
-                zaf_trigger_feedback(lcfg->feedback_pattern, lcfg->feedback_pattern_len);
-            }
+            zaf_evt_activate(zaf_evt_eff_cfg(ZAF_EVTIDX_LAYER, l), NULL);
+        } else {
+            zaf_tick_reset_blink();
         }
         zaf_kick_timer();
         return ZMK_EV_EVENT_BUBBLE;
@@ -1476,16 +1484,8 @@ int zaf_custom_event_trigger(struct zaf_custom_event *evt) {
     if (!evt || (evt->info.color_count == 0 && evt->info.feedback_pattern_len == 0)) {
         return -EINVAL;
     }
-    const uint16_t ticks = zaf_ticks_from_ms(evt->info.flash_duration_ms);
-    evt->ticks   = ticks > 0 ? ticks : 1;
     evt->pending = true;
-    zaf_tick_reset_blink();
-    if (evt->info.animation == ZAF_ANIM_FLASH) {
-        zaf_activate_flash_state(evt->ticks,
-            evt->info.flash_ease_in_ms, evt->info.flash_ease_in_fn,
-            evt->info.flash_ease_out_ms, evt->info.flash_ease_out_fn);
-    }
-    zaf_trigger_feedback(evt->info.feedback_pattern, evt->info.feedback_pattern_len);
+    zaf_evt_activate(&evt->info, &evt->ticks);
     zaf_kick_timer();
     return 0;
 }
@@ -1580,22 +1580,24 @@ int zaf_error_trigger(const uint8_t slot_idx) {
     return 0;
 }
 
-int zaf_error_clear(const uint8_t slot_idx) {
-    if (slot_idx >= zaf_config.error_slots) {
-        return -EINVAL;
-    }
-
-    zaf_state.evts.rt_error_slots[slot_idx].cleared = true;
-    zaf_kick_timer();
-    return zaf_save_evt_cfg();
-}
-
-int zaf_error_clear_all(void) {
-    for (uint8_t i = 0; i < zaf_config.error_slots; i++) {
+static int zaf_error_clear_range(const uint8_t start, const uint8_t count) {
+    const uint8_t end = MIN((uint16_t)start + (uint16_t)count, zaf_config.error_slots);
+    for (uint8_t i = start; i < end; i++) {
         zaf_state.evts.rt_error_slots[i].cleared = true;
     }
     zaf_kick_timer();
     return zaf_save_evt_cfg();
+}
+
+int zaf_error_clear(const uint8_t slot_idx) {
+    if (slot_idx >= zaf_config.error_slots) {
+        return -EINVAL;
+    }
+    return zaf_error_clear_range(slot_idx, 1);
+}
+
+int zaf_error_clear_all(void) {
+    return zaf_error_clear_range(0, zaf_config.error_slots);
 }
 
 static void zaf_apply_error_sections(void) {
@@ -1637,56 +1639,6 @@ static void zaf_apply_error_sections(void) {
             continue;
         }
 
-        switch (cfg->animation) {
-        case ZAF_ANIM_SOLID: {
-            const struct zaf_rgb c0 = cfg->colors[0];
-            const struct led_rgb sc = { .r = c0.r, .g = c0.g, .b = c0.b };
-            zaf_fill_section(start, end, sc);
-            break;
-        }
-
-        case ZAF_ANIM_BLINK: {
-            const uint8_t idx = zaf_state.color_idx % cfg->color_count;
-            const struct zaf_rgb c_cur = cfg->colors[idx];
-            const struct led_rgb sc = zaf_state.blink_phase
-                ? (struct led_rgb){ .r = c_cur.r, .g = c_cur.g, .b = c_cur.b }
-                : (struct led_rgb){ 0, 0, 0 };
-            zaf_fill_section(start, end, sc);
-            break;
-        }
-
-        case ZAF_ANIM_BREATHE: {
-            const uint32_t dur = cfg->breathe_duration_ms;
-            const int32_t tick_ms = ZRC_GET("argb/tick", CONFIG_ZMK_ADAPTIVE_FEEDBACK_TICK_MS);
-            const uint16_t breathe_steps = (tick_ms > 0) ? (uint16_t)(dur / (uint32_t)tick_ms) : 60;
-            const struct zaf_rgb bc = zaf_breathe_color(cfg);
-            const struct led_rgb lbc = { .r = bc.r, .g = bc.g, .b = bc.b };
-            zaf_state.anim_step++;
-            if (zaf_state.anim_step >= breathe_steps) {
-                zaf_state.anim_step = 0;
-                zaf_state.color_idx = (zaf_state.color_idx + 1) % cfg->color_count;
-            }
-            zaf_fill_section(start, end, lbc);
-            break;
-        }
-
-        case ZAF_ANIM_FLASH: {
-            const uint16_t ei_ticks = zaf_ticks_from_ms(cfg->flash_ease_in_ms);
-            const uint16_t eo_ticks = zaf_ticks_from_ms(cfg->flash_ease_out_ms);
-            const uint8_t scale = zaf_compute_flash_scale(
-                ei_ticks, cfg->flash_ease_in_fn,
-                eo_ticks, cfg->flash_ease_out_fn);
-            const struct zaf_rgb c0 = cfg->colors[0];
-            const struct led_rgb sc = {
-                .r = (uint8_t)(((uint16_t)c0.r * scale) >> 8),
-                .g = (uint8_t)(((uint16_t)c0.g * scale) >> 8),
-                .b = (uint8_t)(((uint16_t)c0.b * scale) >> 8),
-            };
-            zaf_fill_section(start, end, sc);
-            break;
-        }
-
-        default: break;
-        }
+        zaf_render_section(cfg, start, end, false);
     }
 }
