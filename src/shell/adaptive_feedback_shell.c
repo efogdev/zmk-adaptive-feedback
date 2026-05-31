@@ -374,8 +374,53 @@ static int cmd_clear(const struct shell *sh, size_t argc, char **argv) {
     return rc;
 }
 
+typedef void (*zaf_evt_visit_fn)(const struct shell *sh, const char *name,
+                                 uint8_t event_idx, uint8_t sub_idx, void *ctx);
+typedef void (*zaf_custom_visit_fn)(const struct shell *sh,
+                                    const struct zaf_custom_event *evt, void *ctx);
+
+static void zaf_shell_foreach_event(const struct shell *sh, const zaf_evt_visit_fn fn,
+                                    const zaf_custom_visit_fn custom_fn, void *ctx) {
+    char name[32];
+
+    for (uint8_t i = 0; i < zaf_error_slots_count(); i++) {
+        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_ERROR], i);
+        fn(sh, name, ZAF_EVTIDX_ERROR, i, ctx);
+    }
+    fn(sh, zaf_evt_names[ZAF_EVTIDX_IDLE],          ZAF_EVTIDX_IDLE,          0, ctx);
+    fn(sh, zaf_evt_names[ZAF_EVTIDX_USB_CONN],      ZAF_EVTIDX_USB_CONN,      0, ctx);
+    fn(sh, zaf_evt_names[ZAF_EVTIDX_USB_DISCONN],   ZAF_EVTIDX_USB_DISCONN,   0, ctx);
+    for (uint8_t prof = 0; prof < CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES; prof++) {
+        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_BLE_PROFILE], prof + 1);
+        fn(sh, name, ZAF_EVTIDX_BLE_PROFILE, prof, ctx);
+    }
+    fn(sh, zaf_evt_names[ZAF_EVTIDX_NO_ENDPOINT],   ZAF_EVTIDX_NO_ENDPOINT,   0, ctx);
+    fn(sh, zaf_evt_names[ZAF_EVTIDX_STUDIO_UNLOCK], ZAF_EVTIDX_STUDIO_UNLOCK, 0, ctx);
+    fn(sh, zaf_evt_names[ZAF_EVTIDX_STUDIO_LOCK],   ZAF_EVTIDX_STUDIO_LOCK,   0, ctx);
+    for (uint8_t lvl = 0; lvl < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT; lvl++) {
+        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_BATT_WARN], lvl + 1);
+        fn(sh, name, ZAF_EVTIDX_BATT_WARN, lvl, ctx);
+    }
+    for (uint8_t lvl = 0; lvl < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT; lvl++) {
+        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_BATT_CRIT], lvl + 1);
+        fn(sh, name, ZAF_EVTIDX_BATT_CRIT, lvl, ctx);
+    }
+    const uint8_t layers = zaf_layer_count();
+    for (uint8_t layer = 0; layer < layers; layer++) {
+        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_LAYER], layer);
+        fn(sh, name, ZAF_EVTIDX_LAYER, layer, ctx);
+    }
+
+    if (custom_fn != NULL) {
+        STRUCT_SECTION_FOREACH(zaf_custom_event, cevt) {
+            custom_fn(sh, cevt, ctx);
+        }
+    }
+}
+
 static void print_named_event(const struct shell *sh, const char *name,
-                              const uint8_t event_idx, const uint8_t sub_idx) {
+                              const uint8_t event_idx, const uint8_t sub_idx, void *ctx) {
+    ARG_UNUSED(ctx);
     if (zaf_event_is_headless(event_idx, sub_idx)) {
         return;
     }
@@ -388,7 +433,8 @@ static void print_named_event(const struct shell *sh, const char *name,
                      zaf_event_is_persistent(event_idx, sub_idx));
 }
 
-static void print_custom_event(const struct shell *sh, const struct zaf_custom_event *evt) {
+static void print_custom_event(const struct shell *sh, const struct zaf_custom_event *evt, void *ctx) {
+    ARG_UNUSED(ctx);
     if (evt->headless) {
         return;
     }
@@ -405,109 +451,44 @@ static int cmd_state(const struct shell *sh, size_t argc, char **argv) {
 
 static int cmd_status(const struct shell *sh, size_t argc, char **argv) {
     shprint(sh, "state: %s", zaf_is_on() ? "on" : "off");
-
-    for (uint8_t i = 0; i < zaf_error_slots_count(); i++) {
-        char name[16];
-        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_ERROR], i);
-        print_named_event(sh, name, ZAF_EVTIDX_ERROR, i);
-    }
-
-    print_named_event(sh, zaf_evt_names[ZAF_EVTIDX_IDLE],          ZAF_EVTIDX_IDLE,          0);
-    print_named_event(sh, zaf_evt_names[ZAF_EVTIDX_USB_CONN],      ZAF_EVTIDX_USB_CONN,      0);
-    print_named_event(sh, zaf_evt_names[ZAF_EVTIDX_USB_DISCONN],   ZAF_EVTIDX_USB_DISCONN,   0);
-    for (uint8_t prof = 0; prof < CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES; prof++) {
-        char name[24];
-        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_BLE_PROFILE], prof + 1);
-        print_named_event(sh, name, ZAF_EVTIDX_BLE_PROFILE, prof);
-    }
-    print_named_event(sh, zaf_evt_names[ZAF_EVTIDX_NO_ENDPOINT],   ZAF_EVTIDX_NO_ENDPOINT,   0);
-    print_named_event(sh, zaf_evt_names[ZAF_EVTIDX_STUDIO_UNLOCK], ZAF_EVTIDX_STUDIO_UNLOCK, 0);
-    print_named_event(sh, zaf_evt_names[ZAF_EVTIDX_STUDIO_LOCK],   ZAF_EVTIDX_STUDIO_LOCK,   0);
-
-    for (uint8_t lvl = 0; lvl < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT; lvl++) {
-        char name[16];
-        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_BATT_WARN], lvl + 1);
-        print_named_event(sh, name, ZAF_EVTIDX_BATT_WARN, lvl);
-    }
-    for (uint8_t lvl = 0; lvl < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT; lvl++) {
-        char name[16];
-        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_BATT_CRIT], lvl + 1);
-        print_named_event(sh, name, ZAF_EVTIDX_BATT_CRIT, lvl);
-    }
-
-    const uint8_t layers = zaf_layer_count();
-    for (uint8_t layer = 0; layer < layers; layer++) {
-        char name[16];
-        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_LAYER], layer);
-        print_named_event(sh, name, ZAF_EVTIDX_LAYER, layer);
-    }
-
-    STRUCT_SECTION_FOREACH(zaf_custom_event, cevt) {
-        print_custom_event(sh, cevt);
-    }
-
+    zaf_shell_foreach_event(sh, print_named_event, print_custom_event, NULL);
     return 0;
+}
+
+static void list_named_event(const struct shell *sh, const char *name,
+                             const uint8_t event_idx, const uint8_t sub_idx, void *ctx) {
+    if (zaf_event_is_headless(event_idx, sub_idx)) {
+        return;
+    }
+    bool *first = ctx;
+    const char *lbl = zaf_event_get_label(event_idx, sub_idx);
+    if (!*first) { shell_fprintf(sh, SHELL_NORMAL, ", "); }
+    if (lbl && lbl[0]) {
+        shell_fprintf(sh, SHELL_NORMAL, "%s (%s)", name, lbl);
+    } else {
+        shell_fprintf(sh, SHELL_NORMAL, "%s", name);
+    }
+    *first = false;
+}
+
+static void list_custom_event(const struct shell *sh, const struct zaf_custom_event *evt, void *ctx) {
+    if (evt->headless) {
+        return;
+    }
+    bool *first = ctx;
+    const char *lbl = zaf_custom_event_get_label(evt);
+    if (!*first) { shell_fprintf(sh, SHELL_NORMAL, ", "); }
+    if (lbl && lbl[0]) {
+        shell_fprintf(sh, SHELL_NORMAL, "%s (%s)", evt->name, lbl);
+    } else {
+        shell_fprintf(sh, SHELL_NORMAL, "%s", evt->name);
+    }
+    *first = false;
 }
 
 static int cmd_list(const struct shell *sh, size_t argc, char **argv) {
     bool first = true;
-    char name[32];
-
-#define _LIST_EVT(_name_str, _event_idx, _sub_idx)                                    \
-    do {                                                                               \
-        if (!zaf_event_is_headless((_event_idx), (_sub_idx))) {                        \
-            const char *_lbl = zaf_event_get_label((_event_idx), (_sub_idx));         \
-            if (!first) { shell_fprintf(sh, SHELL_NORMAL, ", "); }                    \
-            if (_lbl && _lbl[0]) {                                                     \
-                shell_fprintf(sh, SHELL_NORMAL, "%s (%s)", (_name_str), _lbl);        \
-            } else {                                                                   \
-                shell_fprintf(sh, SHELL_NORMAL, "%s", (_name_str));                   \
-            }                                                                          \
-            first = false;                                                             \
-        }                                                                              \
-    } while (0)
-
-    for (uint8_t i = 0; i < zaf_error_slots_count(); i++) {
-        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_ERROR], i);
-        _LIST_EVT(name, ZAF_EVTIDX_ERROR, i);
-    }
-    _LIST_EVT(zaf_evt_names[ZAF_EVTIDX_IDLE],          ZAF_EVTIDX_IDLE,          0);
-    _LIST_EVT(zaf_evt_names[ZAF_EVTIDX_USB_CONN],      ZAF_EVTIDX_USB_CONN,      0);
-    _LIST_EVT(zaf_evt_names[ZAF_EVTIDX_USB_DISCONN],   ZAF_EVTIDX_USB_DISCONN,   0);
-    for (uint8_t prof = 0; prof < CONFIG_ADAPTIVE_FEEDBACK_MAX_BT_DEVICES; prof++) {
-        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_BLE_PROFILE], prof + 1);
-        _LIST_EVT(name, ZAF_EVTIDX_BLE_PROFILE, prof);
-    }
-    _LIST_EVT(zaf_evt_names[ZAF_EVTIDX_NO_ENDPOINT],   ZAF_EVTIDX_NO_ENDPOINT,   0);
-    _LIST_EVT(zaf_evt_names[ZAF_EVTIDX_STUDIO_UNLOCK], ZAF_EVTIDX_STUDIO_UNLOCK, 0);
-    _LIST_EVT(zaf_evt_names[ZAF_EVTIDX_STUDIO_LOCK],   ZAF_EVTIDX_STUDIO_LOCK,   0);
-    for (uint8_t lvl = 0; lvl < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT; lvl++) {
-        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_BATT_WARN], lvl + 1);
-        _LIST_EVT(name, ZAF_EVTIDX_BATT_WARN, lvl);
-    }
-    for (uint8_t lvl = 0; lvl < CONFIG_ZMK_ADAPTIVE_FEEDBACK_BATT_LEVEL_COUNT; lvl++) {
-        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_BATT_CRIT], lvl + 1);
-        _LIST_EVT(name, ZAF_EVTIDX_BATT_CRIT, lvl);
-    }
-    const uint8_t layers = zaf_layer_count();
-    for (uint8_t layer = 0; layer < layers; layer++) {
-        snprintf(name, sizeof(name), "%s %d", zaf_evt_names[ZAF_EVTIDX_LAYER], layer);
-        _LIST_EVT(name, ZAF_EVTIDX_LAYER, layer);
-    }
-    STRUCT_SECTION_FOREACH(zaf_custom_event, cevt) {
-        if (!cevt->headless) {
-            const char *lbl = zaf_custom_event_get_label(cevt);
-            if (!first) { shell_fprintf(sh, SHELL_NORMAL, ", "); }
-            if (lbl && lbl[0]) {
-                shell_fprintf(sh, SHELL_NORMAL, "%s (%s)", cevt->name, lbl);
-            } else {
-                shell_fprintf(sh, SHELL_NORMAL, "%s", cevt->name);
-            }
-            first = false;
-        }
-    }
-#undef _LIST_EVT
-
+    zaf_shell_foreach_event(sh, list_named_event, list_custom_event, &first);
     shell_fprintf(sh, SHELL_NORMAL, "\n");
     return 0;
 }

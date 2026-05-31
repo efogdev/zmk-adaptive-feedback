@@ -5,9 +5,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/led_strip.h>
 #include <zephyr/drivers/gpio.h>
-
 #include <drivers/ext_power.h>
-
 #include <zmk/event_manager.h>
 #include <zmk/workqueue.h>
 #include <zmk/activity.h>
@@ -24,7 +22,6 @@
 #endif
 
 #include <zmk_adaptive_feedback/adaptive_feedback.h>
-
 #include "zmk/keymap.h"
 
 #if IS_ENABLED(CONFIG_ZMK_RUNTIME_CONFIG)
@@ -521,8 +518,8 @@ static uint8_t __noinline zaf_compute_flash_scale(
 }
 
 static void zaf_render_section(const struct zaf_event_info *cfg,
-                               uint16_t start, uint16_t end,
-                               bool is_main_path) {
+                               const uint16_t start, const uint16_t end,
+                               const bool is_main_path) {
     if (cfg->color_count == 0) {
         if (is_main_path) zaf_clear_pixels();
         return;
@@ -1308,7 +1305,7 @@ int zaf_event_set(const uint8_t event_idx, const uint8_t sub_idx,
     return zaf_evt_set_impl(event_idx, sub_idx, field, val);
 }
 
-static void zaf_clear_valid_array(struct zaf_evt_override *arr, size_t n) {
+static void zaf_clear_valid_array(struct zaf_evt_override *arr, const size_t n) {
     for (size_t i = 0; i < n; i++) arr[i].valid = false;
 }
 
