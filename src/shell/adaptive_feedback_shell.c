@@ -493,40 +493,6 @@ static int cmd_list(const struct shell *sh, size_t argc, char **argv) {
     return 0;
 }
 
-static int cmd_error(const struct shell *sh, const size_t argc, char **argv) {
-    if (argc < 3) {
-        shprint(sh, "usage: argb error <slot> <trigger|clear|clear-all>");
-        return -EINVAL;
-    }
-
-    const uint8_t slot = (uint8_t)strtol(argv[1], NULL, 10);
-    const char *action = argv[2];
-    int rc = 0;
-
-    if (strcmp(action, "trigger") == 0) {
-        rc = zaf_error_trigger(slot);
-        if (rc == 0) {
-            shprint(sh, "error slot %d triggered", slot);
-        }
-    } else if (strcmp(action, "clear") == 0) {
-        rc = zaf_error_clear(slot);
-        if (rc == 0) {
-            shprint(sh, "error slot %d cleared", slot);
-        }
-    } else if (strcmp(action, "clear-all") == 0) {
-        rc = zaf_error_clear_all();
-        shprint(sh, "all error slots cleared");
-    } else {
-        shprint(sh, "unknown action '%s' (trigger|clear|clear-all)", action);
-        return -EINVAL;
-    }
-
-    if (rc) {
-        shprint(sh, "error: %d", rc);
-    }
-    return rc;
-}
-
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_argb,
     SHELL_CMD(on,     NULL, "Enable feedback",  cmd_on),
     SHELL_CMD(off,    NULL, "Disable feedback", cmd_off),
@@ -534,14 +500,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_argb,
     SHELL_CMD(status, NULL, "Show state and all event configs", cmd_status),
     SHELL_CMD(list,   NULL, "List all available events", cmd_list),
     SHELL_CMD(clear,  NULL, "Clear all persisted settings", cmd_clear),
-    SHELL_CMD_ARG(evt, NULL,
-        "Inspect or modify an event's LED config.",
-        cmd_evt, 3, 11),
-    SHELL_CMD_ARG(error, NULL,
-        "Error slot control.\n"
-        "Usage: argb error <slot> <trigger|clear|clear-all>",
-        cmd_error, 3, 3),
+    SHELL_CMD_ARG(evt, NULL, "Inspect or modify an event's LED config.", cmd_evt, 3, 11),
     SHELL_SUBCMD_SET_END
 );
 
-SHELL_CMD_REGISTER(argb, &sub_argb, "Adaptive Feedback control", NULL);
+SHELL_CMD_REGISTER(argb, &sub_argb, "Adaptive feedback control", NULL);
