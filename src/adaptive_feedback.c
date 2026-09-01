@@ -73,6 +73,7 @@ struct zaf_evt_state {
 };
 
 struct __attribute__((__packed__)) zaf_runtime_state {
+    bool initialized;
     bool on;
     bool override_active;
     bool feedback_active;
@@ -610,6 +611,9 @@ static void zaf_apply_animation(const struct zaf_event_info *cfg) {
 static void zaf_feedback_step(void);
 
 static void zaf_feedback_step_work_fn(struct k_work *work) {
+    if (!zaf_state.initialized) {
+        return;
+    }
     zaf_feedback_step();
 }
 
@@ -683,7 +687,7 @@ static bool __noinline zaf_tick_decrement(uint16_t *ticks) {
 }
 
 static void zaf_tick(struct k_work *work) {
-    if (!zaf_state.on) {
+    if (!zaf_state.initialized || !zaf_state.on) {
         return;
     }
 
@@ -804,7 +808,7 @@ static void zaf_off_work_fn(struct k_work *work) {
 K_WORK_DEFINE(zaf_off_work, zaf_off_work_fn);
 
 static void zaf_kick_timer(void) {
-    if (!zaf_state.on) {
+    if (!zaf_state.on || !zaf_state.initialized) {
         return;
     }
     const uint32_t tick_ms = (uint32_t)ZRC_GET("argb/tick", CONFIG_ZMK_ADAPTIVE_FEEDBACK_TICK_MS);
@@ -898,7 +902,19 @@ static int zaf_settings_set(const char *name, const size_t len, const settings_r
     return -ENOENT;
 }
 
-SETTINGS_STATIC_HANDLER_DEFINE(zaf_settings, "argb", NULL, zaf_settings_set, NULL, NULL);
+static int zaf_settings_commit() {
+    if (zaf_state.on) {
+        if (zaf_config.ext_power != NULL) {
+            ext_power_enable(zaf_config.ext_power);
+        }
+        k_timer_start(&zaf_timer, K_NO_WAIT, K_MSEC(CONFIG_ZMK_ADAPTIVE_FEEDBACK_TICK_MS));
+    }
+
+    zaf_state.initialized = true;
+    return 0;
+}
+
+SETTINGS_STATIC_HANDLER_DEFINE(zaf_settings, "argb", NULL, zaf_settings_set, zaf_settings_commit, NULL);
 
 static int zaf_save_state(void) {
     const int ret = k_work_reschedule(&zaf_save_work, K_MSEC(CONFIG_ZMK_SETTINGS_SAVE_DEBOUNCE));
@@ -1086,12 +1102,6 @@ static int zaf_init(void) {
     for (uint8_t i = 0; i < zaf_config.error_slots && i < CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_ERROR_SLOTS; i++) {
         zaf_state.evts.rt_error_slots[i].cleared = true;
     }
-    if (zaf_state.on) {
-        if (zaf_config.ext_power != NULL) {
-            ext_power_enable(zaf_config.ext_power);
-        }
-        k_timer_start(&zaf_timer, K_NO_WAIT, K_MSEC(CONFIG_ZMK_ADAPTIVE_FEEDBACK_TICK_MS));
-    }
 
     return 0;
 }
@@ -1099,6 +1109,10 @@ static int zaf_init(void) {
 SYS_INIT(zaf_init, APPLICATION, CONFIG_APPLICATION_INIT_PRIORITY);
 
 int zaf_on(void) {
+    if (!zaf_state.initialized) {
+        return -EAGAIN;
+    }
+
     if (zaf_state.on) {
         return 0;
     }
@@ -1115,6 +1129,10 @@ int zaf_on(void) {
 }
 
 int zaf_off(void) {
+    if (!zaf_state.initialized) {
+        return -EAGAIN;
+    }
+
     if (!zaf_state.on) {
         return 0;
     }
@@ -1346,6 +1364,9 @@ int zaf_clear_persisted(void) {
 }
 
 static void zaf_evt_activate(const struct zaf_event_info *ecfg, uint16_t *ticks_out) {
+    if (!zaf_state.initialized) {
+        return;
+    }
     if (!ecfg) {
         if (ticks_out) *ticks_out = 1;
         return;
@@ -1363,6 +1384,10 @@ static void zaf_evt_activate(const struct zaf_event_info *ecfg, uint16_t *ticks_
 }
 
 static int zaf_event_listener(const zmk_event_t *eh) {
+    if (!zaf_state.initialized) {
+        return ZMK_EV_EVENT_BUBBLE;
+    }
+
     const struct zmk_battery_state_changed *batt = as_zmk_battery_state_changed(eh);
     if (batt) {
         const uint8_t prev = zaf_state.batt_level;
@@ -1478,6 +1503,9 @@ ZMK_SUBSCRIPTION(zaf, zmk_studio_core_lock_state_changed);
 #endif
 
 int zaf_custom_event_trigger(struct zaf_custom_event *evt) {
+    if (!zaf_state.initialized) {
+        return -EAGAIN;
+    }
     if (!evt || (evt->info.color_count == 0 && evt->info.feedback_pattern_len == 0)) {
         return -EINVAL;
     }
@@ -1495,8 +1523,10 @@ int zaf_custom_event_get(const struct zaf_custom_event *evt, struct zaf_event_in
     return 0;
 }
 
-int zaf_custom_event_set(struct zaf_custom_event *evt, const enum zaf_field field,
-                         const union zaf_field_value val) {
+int zaf_custom_event_set(struct zaf_custom_event *evt, const enum zaf_field field, const union zaf_field_value val) {
+    if (!zaf_state.initialized) {
+        return -EAGAIN;
+    }
     if (!evt) {
         return -EINVAL;
     }
@@ -1537,8 +1567,10 @@ int zaf_error_get(const uint8_t slot_idx, struct zaf_event_info *out) {
     return 0;
 }
 
-int zaf_error_set(const uint8_t slot_idx, const enum zaf_field field,
-                  const union zaf_field_value val) {
+int zaf_error_set(const uint8_t slot_idx, const enum zaf_field field, const union zaf_field_value val) {
+    if (!zaf_state.initialized) {
+        return -EAGAIN;
+    }
     if (field == ZAF_FIELD_COLOR_AT && val.color_at.idx >= CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_COLORS) {
         return -EINVAL;
     }
@@ -1559,6 +1591,10 @@ int zaf_error_set(const uint8_t slot_idx, const enum zaf_field field,
 }
 
 int zaf_error_trigger(const uint8_t slot_idx) {
+    if (!zaf_state.initialized) {
+        return -EAGAIN;
+    }
+
     if (slot_idx >= zaf_config.error_slots) {
         return -EINVAL;
     }
@@ -1578,6 +1614,10 @@ int zaf_error_trigger(const uint8_t slot_idx) {
 }
 
 static int zaf_error_clear_range(const uint8_t start, const uint8_t count) {
+    if (!zaf_state.initialized) {
+        return -EAGAIN;
+    }
+
     const uint8_t end = MIN((uint16_t)start + (uint16_t)count, zaf_config.error_slots);
     for (uint8_t i = start; i < end; i++) {
         zaf_state.evts.rt_error_slots[i].cleared = true;
@@ -1587,6 +1627,10 @@ static int zaf_error_clear_range(const uint8_t start, const uint8_t count) {
 }
 
 int zaf_error_clear(const uint8_t slot_idx) {
+    if (!zaf_state.initialized) {
+        return -EAGAIN;
+    }
+
     if (slot_idx >= zaf_config.error_slots) {
         return -EINVAL;
     }
