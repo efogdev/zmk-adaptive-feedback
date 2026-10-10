@@ -1098,7 +1098,6 @@ static int zaf_init(void) {
     zrc_register("argb/brt",  CONFIG_ZMK_ADAPTIVE_FEEDBACK_BRIGHTNESS,         0,   100);
 #endif
 
-    settings_load_subtree("argb");
     for (uint8_t i = 0; i < zaf_config.error_slots && i < CONFIG_ZMK_ADAPTIVE_FEEDBACK_MAX_ERROR_SLOTS; i++) {
         zaf_state.evts.rt_error_slots[i].cleared = true;
     }
